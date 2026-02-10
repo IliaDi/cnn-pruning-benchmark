@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# Data
+data/
+*.tar
+*.zip
+
+# Results
+results/
+results_debug/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Smoke test
+smoke_test.py
