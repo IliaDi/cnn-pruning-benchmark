@@ -6,15 +6,20 @@ import torch
 import numpy as np
 from datetime import datetime
 
-from config import METHODS, PRUNING_RATIOS, RESULTS_DIR, SEED, BASELINE_TRAIN_EPOCHS
+from config import (
+    METHODS, PRUNING_RATIOS, RESULTS_DIR, SEED, BASELINE_TRAIN_EPOCHS,
+    POST_PRUNING_FINE_TUNE_EPOCHS, POST_PRUNING_FINE_TUNE_LR,
+    POST_PRUNING_FINE_TUNE_MOMENTUM, POST_PRUNING_FINE_TUNE_WEIGHT_DECAY
+)
 
 from utils.metrics import (
     evaluate_accuracy,
     count_parameters,
-    compute_flops
+    compute_flops,
+    measure_inference_latency
 )
 from utils.pruning import apply_pruning_method
-from utils.training import train
+from utils.training import train, fine_tune_post_pruning
 from utils.data import get_cifar10_loaders
 from models.vgg import vgg16
 
@@ -44,7 +49,8 @@ def run():
     set_seed(SEED)
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    train_loader, test_loader = get_cifar10_loaders()
+    # Get data loaders with augmentation for training (used for baseline and fine-tuning)
+    train_loader, test_loader = get_cifar10_loaders(use_augmentation=True)
 
     # Baseline Model
     baseline_dir = os.path.join(RESULTS_DIR, "baseline")
@@ -61,13 +67,19 @@ def run():
     baseline_acc = evaluate_accuracy(model, test_loader)
     baseline_params = count_parameters(model)
     baseline_flops = compute_flops(model)
+    
+    # Measure baseline inference latency
+    print("Measuring baseline inference latency...")
+    baseline_latency_ms = measure_inference_latency(model, batch_size=1)
+    print(f"Baseline inference latency: {baseline_latency_ms:.3f} ms per sample")
 
     torch.save(model.state_dict(), os.path.join(baseline_dir, "model.pth"))
 
     baseline_metrics = {
         "accuracy": baseline_acc,
         "parameters": baseline_params,
-        "flops": baseline_flops
+        "flops": baseline_flops,
+        "inference_latency_ms": baseline_latency_ms
     }
     save_metrics(baseline_dir, baseline_metrics)
 
@@ -81,7 +93,9 @@ def run():
     for scope, methods in METHODS.items():
         for method in methods:
             for ratio in PRUNING_RATIOS:
-                print(f"[{method} | {scope}] Target pruning ratio: {ratio}")
+                removal_pct = ratio * 100
+                retention_pct = (1 - ratio) * 100
+                print(f"[{method} | {scope}] Removing {removal_pct:.0f}% of filters (retaining {retention_pct:.0f}%)")
 
                 exp_dir = os.path.join(
                     RESULTS_DIR, method, f"ratio_{ratio}"
@@ -102,8 +116,32 @@ def run():
                     target_ratio=ratio
                 )
 
+                print(f"  Fine-tuning pruned model for {POST_PRUNING_FINE_TUNE_EPOCHS} epochs...")
+                model, fine_tune_metrics = fine_tune_post_pruning(
+                    model=model,
+                    train_loader=train_loader,
+                    test_loader=test_loader,
+                    baseline_accuracy=baseline_acc,
+                    epochs=POST_PRUNING_FINE_TUNE_EPOCHS,
+                    lr=POST_PRUNING_FINE_TUNE_LR,
+                    momentum=POST_PRUNING_FINE_TUNE_MOMENTUM,
+                    weight_decay=POST_PRUNING_FINE_TUNE_WEIGHT_DECAY
+                )
+                print(f"  Fine-tuning complete.")
+                
+                # Check if accuracy recovered
+                if fine_tune_metrics['epochs_to_recover'] is not None:
+                    print(f"  Accuracy recovered after {fine_tune_metrics['epochs_to_recover']} epochs")
+                else:
+                    print(f"  Accuracy did not fully recover (final: {fine_tune_metrics['final_accuracy']:.4f}, baseline: {baseline_acc:.4f})")
+
                 pruned_params = count_parameters(model)
                 pruned_flops = compute_flops(model)
+                
+                # Measure inference latency (distinguishes from FLOPs - FLOPs ≠ speed)
+                print(f"  Measuring inference latency...")
+                inference_latency_ms = measure_inference_latency(model, batch_size=1)
+                print(f"  Inference latency: {inference_latency_ms:.3f} ms per sample")
 
                 pruned_acc = evaluate_accuracy(model, test_loader)
 
@@ -119,11 +157,13 @@ def run():
                 metrics = {
                     "method": method,
                     "scope": scope,
-                    "target_pruning_ratio": ratio,
+                    "target_pruning_ratio": ratio,  # Fraction removed (0.3 = 30% removed)
+                    "filter_retention": 1.0 - ratio,  # Fraction retained (0.7 = 70% retained)
                     # Baseline metrics
                     "baseline_accuracy": baseline_acc,
                     "baseline_flops_m": baseline_flops_m,
                     "baseline_parameters_m": baseline_params_m,
+                    "baseline_inference_latency_ms": baseline_latency_ms,
                     # Pruned metrics
                     "accuracy_after_pruning": pruned_acc,
                     "flops_after_pruning_m": pruned_flops_m,
@@ -132,6 +172,15 @@ def run():
                     "accuracy_drop_pct": accuracy_drop_pct,
                     "flops_drop_pct": flops_drop_pct,
                     "parameters_drop_pct": params_drop_pct,
+                    # Fine-tuning info
+                    "fine_tune_epochs": POST_PRUNING_FINE_TUNE_EPOCHS,
+                    "fine_tune_lr": POST_PRUNING_FINE_TUNE_LR,
+                    # Fine-tuning cost metrics
+                    "epochs_to_recover_accuracy": fine_tune_metrics['epochs_to_recover'],
+                    "fine_tune_final_accuracy": fine_tune_metrics['final_accuracy'],
+                    # Inference latency (FLOPs ≠ speed)
+                    "inference_latency_ms": inference_latency_ms,
+                    "inference_speedup": baseline_latency_ms / inference_latency_ms if inference_latency_ms > 0 else None,
                     # Raw values (for precision)
                     "accuracy": pruned_acc,
                     "parameters": pruned_params,
