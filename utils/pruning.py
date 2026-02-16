@@ -5,7 +5,8 @@ def apply_pruning_method(
     model,
     method,
     scope,
-    target_ratio
+    target_ratio,
+    limit_batches=None
 ):
     """
     Apply structural pruning to the model.
@@ -19,20 +20,34 @@ def apply_pruning_method(
         method: Pruning method name (e.g., "ApoZ", "ThiNet", etc.)
         scope: Pruning scope ("local" or "global")
         target_ratio: Fraction of filters/channels to REMOVE (0.3 = remove 30%, keep 70%)
+        limit_batches: Optional limit on batches for calibration (for quick testing)
     
     Returns:
         model: Structurally pruned model (architecture modified, not just weights masked)
     """
-    # TODO: Replace with real structural pruning logic
-    # For now, do nothing (identity) - this is a placeholder
-    # 
-    # IMPORTANT: When implementing, ensure:
-    # 1. Filters/channels are physically removed (not just zeroed)
-    # 2. Weight tensors are reshaped (e.g., Conv2d out_channels reduced)
-    # 3. Subsequent layers' in_channels are adjusted accordingly
-    # 4. Model architecture is permanently modified
-    
-    return model
+    if method == "ApoZ":
+        from utils.apoz import apply_apoz_pruning
+        from utils.data import get_cifar10_loaders
+        
+        # Get a calibration dataloader for APoZ computation
+        # Use test loader (no augmentation) for consistent APoZ scores
+        _, calib_loader = get_cifar10_loaders(batch_size=128, use_augmentation=False)
+        
+        # Apply APoZ pruning
+        model = apply_apoz_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope=scope,
+            limit_batches=limit_batches
+        )
+        
+        return model
+    else:
+        # TODO: Implement other pruning methods
+        # For now, return model unchanged
+        print(f"  Warning: Method '{method}' not yet implemented, skipping pruning.")
+        return model
 
 
 def get_layer_info(model):

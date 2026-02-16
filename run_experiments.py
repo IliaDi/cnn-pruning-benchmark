@@ -4,6 +4,7 @@ import json
 import csv
 import torch
 import numpy as np
+import argparse
 from datetime import datetime
 
 from config import (
@@ -45,9 +46,36 @@ def save_metrics(path, metrics):
         writer.writerow(metrics)
 
 
-def run():
+def run(quick_test=False):
+    """
+    Run pruning experiments.
+    
+    Args:
+        quick_test: If True, use reduced epochs and fewer experiments for quick testing
+    """
     set_seed(SEED)
     os.makedirs(RESULTS_DIR, exist_ok=True)
+    
+    # Adjust configuration for quick test mode
+    if quick_test:
+        baseline_epochs = 2  # Very quick baseline training
+        fine_tune_epochs = 2  # Quick fine-tuning
+        pruning_ratios = [0.3, 0.5]  # Test two ratios for quick validation
+        measure_latency = False  # Skip expensive latency measurement
+        apoz_calib_batches = 10  # Limit APoZ calibration batches
+        print("=" * 70)
+        print("QUICK TEST MODE ENABLED")
+        print(f"  Baseline epochs: {baseline_epochs} (instead of {BASELINE_TRAIN_EPOCHS})")
+        print(f"  Fine-tune epochs: {fine_tune_epochs} (instead of {POST_PRUNING_FINE_TUNE_EPOCHS})")
+        print(f"  Pruning ratios: {pruning_ratios} (instead of {PRUNING_RATIOS})")
+        print(f"  Latency measurement: {'SKIPPED' if not measure_latency else 'ENABLED'}")
+        print("=" * 70)
+    else:
+        baseline_epochs = BASELINE_TRAIN_EPOCHS
+        fine_tune_epochs = POST_PRUNING_FINE_TUNE_EPOCHS
+        pruning_ratios = PRUNING_RATIOS
+        measure_latency = True
+        apoz_calib_batches = None
 
     # Get data loaders with augmentation for training (used for baseline and fine-tuning)
     train_loader, test_loader = get_cifar10_loaders(use_augmentation=True)
@@ -60,18 +88,22 @@ def run():
     model = vgg16(num_classes=10, pretrained=True).to(DEVICE)
     
     # Fine-tune on CIFAR-10 to convergence
-    print(f"Fine-tuning ImageNet pretrained VGG-16 on CIFAR-10 for {BASELINE_TRAIN_EPOCHS} epochs...")
-    train(model, train_loader, epochs=BASELINE_TRAIN_EPOCHS, fine_tune=True)
+    print(f"Fine-tuning ImageNet pretrained VGG-16 on CIFAR-10 for {baseline_epochs} epochs...")
+    train(model, train_loader, epochs=baseline_epochs, fine_tune=True)
     print("Fine-tuning complete.")
 
     baseline_acc = evaluate_accuracy(model, test_loader)
     baseline_params = count_parameters(model)
     baseline_flops = compute_flops(model)
     
-    # Measure baseline inference latency
-    print("Measuring baseline inference latency...")
-    baseline_latency_ms = measure_inference_latency(model, batch_size=1)
-    print(f"Baseline inference latency: {baseline_latency_ms:.3f} ms per sample")
+    # Measure baseline inference latency (skip in quick test mode)
+    if measure_latency:
+        print("Measuring baseline inference latency...")
+        baseline_latency_ms = measure_inference_latency(model, batch_size=1)
+        print(f"Baseline inference latency: {baseline_latency_ms:.3f} ms per sample")
+    else:
+        baseline_latency_ms = None
+        print("Skipping baseline inference latency measurement (quick test mode)")
 
     torch.save(model.state_dict(), os.path.join(baseline_dir, "model.pth"))
 
@@ -92,7 +124,7 @@ def run():
     # Pruning Experiments
     for scope, methods in METHODS.items():
         for method in methods:
-            for ratio in PRUNING_RATIOS:
+            for ratio in pruning_ratios:
                 removal_pct = ratio * 100
                 retention_pct = (1 - ratio) * 100
                 print(f"[{method} | {scope}] Removing {removal_pct:.0f}% of filters (retaining {retention_pct:.0f}%)")
@@ -121,7 +153,8 @@ def run():
                     model=model,
                     method=method,
                     scope=scope,
-                    target_ratio=ratio
+                    target_ratio=ratio,
+                    limit_batches=apoz_calib_batches if quick_test else None
                 )
 
                 # Measure post-pruning layer structure for logging
@@ -131,13 +164,13 @@ def run():
                 # This isolates the quality of each method's importance criterion
                 pre_finetune_acc = evaluate_accuracy(model, test_loader)
 
-                print(f"  Fine-tuning pruned model for {POST_PRUNING_FINE_TUNE_EPOCHS} epochs...")
+                print(f"  Fine-tuning pruned model for {fine_tune_epochs} epochs...")
                 model, fine_tune_metrics = fine_tune_post_pruning(
                     model=model,
                     train_loader=train_loader,
                     test_loader=test_loader,
                     baseline_accuracy=baseline_acc,
-                    epochs=POST_PRUNING_FINE_TUNE_EPOCHS,
+                    epochs=fine_tune_epochs,
                     lr=POST_PRUNING_FINE_TUNE_LR,
                     momentum=POST_PRUNING_FINE_TUNE_MOMENTUM,
                     weight_decay=POST_PRUNING_FINE_TUNE_WEIGHT_DECAY
@@ -153,10 +186,14 @@ def run():
                 pruned_params = count_parameters(model)
                 pruned_flops = compute_flops(model)
                 
-                # Measure inference latency (distinguishes from FLOPs - FLOPs ≠ speed)
-                print(f"  Measuring inference latency...")
-                inference_latency_ms = measure_inference_latency(model, batch_size=1)
-                print(f"  Inference latency: {inference_latency_ms:.3f} ms per sample")
+                # Measure inference latency (skip in quick test mode)
+                if measure_latency:
+                    print(f"  Measuring inference latency...")
+                    inference_latency_ms = measure_inference_latency(model, batch_size=1)
+                    print(f"  Inference latency: {inference_latency_ms:.3f} ms per sample")
+                else:
+                    inference_latency_ms = None
+                    print(f"  Skipping inference latency measurement (quick test mode)")
 
                 pruned_acc = evaluate_accuracy(model, test_loader)
 
@@ -193,14 +230,14 @@ def run():
                     "flops_drop_pct": flops_drop_pct,
                     "parameters_drop_pct": params_drop_pct,
                     # Fine-tuning info
-                    "fine_tune_epochs": POST_PRUNING_FINE_TUNE_EPOCHS,
+                    "fine_tune_epochs": fine_tune_epochs,
                     "fine_tune_lr": POST_PRUNING_FINE_TUNE_LR,
                     # Fine-tuning cost metrics
                     "epochs_to_recover_accuracy": fine_tune_metrics['epochs_to_recover'],
                     "fine_tune_final_accuracy": fine_tune_metrics['final_accuracy'],
                     # Inference latency (FLOPs ≠ speed)
                     "inference_latency_ms": inference_latency_ms,
-                    "inference_speedup": baseline_latency_ms / inference_latency_ms if inference_latency_ms > 0 else None,
+                    "inference_speedup": baseline_latency_ms / inference_latency_ms if (baseline_latency_ms and inference_latency_ms and inference_latency_ms > 0) else None,
                     # Raw values (for precision)
                     "accuracy": pruned_acc,
                     "parameters": pruned_params,
@@ -238,4 +275,12 @@ def run():
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(description="Run pruning experiments")
+    parser.add_argument(
+        "--quick-test",
+        action="store_true",
+        help="Enable quick test mode (reduced epochs, fewer experiments, skip latency measurement)"
+    )
+    args = parser.parse_args()
+    
+    run(quick_test=args.quick_test)

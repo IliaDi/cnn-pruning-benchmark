@@ -8,6 +8,33 @@ on CNNs using VGG16 and CIFAR-10.
 - `models/` – model definitions
 - `utils/` – training, metrics, pruning utilities
 
+## Quick Start
+
+### Quick Test Mode
+For fast validation and testing, use the `--quick-test` flag:
+
+```bash
+python run_experiments.py --quick-test
+```
+
+Quick test mode:
+- **Baseline training**: 2 epochs (instead of 100)
+- **Fine-tuning**: 2 epochs (instead of 30)
+- **Pruning ratios**: Tests 0.3 and 0.5 (instead of [0.3, 0.5, 0.7])
+- **APoZ calibration**: Limited to 10 batches (faster computation)
+- **Latency measurement**: Skipped (saves significant time)
+
+Expected runtime: ~5-15 minutes (depending on hardware)
+
+### Full Experiments
+Run full experiments with all epochs and measurements:
+
+```bash
+python run_experiments.py
+```
+
+Expected runtime: Several hours (100 baseline epochs + 30 fine-tune epochs × 3 ratios)
+
 ## Approach
 - **Baseline Model**: ImageNet pretrained VGG-16, adapted classifier head for 10 classes, fine-tuned on CIFAR-10 to convergence
 - This provides strong pretrained features while being fully grounded in CIFAR-10
