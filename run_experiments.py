@@ -18,7 +18,7 @@ from utils.metrics import (
     compute_flops,
     measure_inference_latency
 )
-from utils.pruning import apply_pruning_method
+from utils.pruning import apply_pruning_method, get_layer_info
 from utils.training import train, fine_tune_post_pruning
 from utils.data import get_cifar10_loaders
 from models.vgg import vgg16
@@ -102,19 +102,34 @@ def run():
                 )
                 os.makedirs(exp_dir, exist_ok=True)
 
+                # Re-seed for reproducibility (each experiment should start from same random state)
+                set_seed(SEED)
+
                 # Load fine-tuned baseline model
+                # Using strict=True ensures architecture matches - if it fails, there's a bug
                 model = vgg16(num_classes=10, pretrained=False).to(DEVICE)
                 model.load_state_dict(
                     torch.load(os.path.join(baseline_dir, "model.pth")),
-                    strict=False
+                    strict=True  # Changed from False - should match exactly
                 )
 
+                # Measure pre-pruning layer structure for logging
+                pre_pruning_layer_info = get_layer_info(model)
+
+                # Apply structural pruning (must physically remove filters, not just mask them)
                 apply_pruning_method(
                     model=model,
                     method=method,
                     scope=scope,
                     target_ratio=ratio
                 )
+
+                # Measure post-pruning layer structure for logging
+                post_pruning_layer_info = get_layer_info(model)
+
+                # Measure accuracy immediately after pruning (before fine-tuning)
+                # This isolates the quality of each method's importance criterion
+                pre_finetune_acc = evaluate_accuracy(model, test_loader)
 
                 print(f"  Fine-tuning pruned model for {POST_PRUNING_FINE_TUNE_EPOCHS} epochs...")
                 model, fine_tune_metrics = fine_tune_post_pruning(
@@ -151,24 +166,29 @@ def run():
 
                 # Calculate drops
                 accuracy_drop_pct = 100.0 * (baseline_acc - pruned_acc)
+                accuracy_drop_before_finetune_pct = 100.0 * (baseline_acc - pre_finetune_acc)
                 params_drop_pct = 100.0 * (1.0 - pruned_params / baseline_params)
                 flops_drop_pct = 100.0 * (1.0 - pruned_flops / baseline_flops)
 
                 metrics = {
                     "method": method,
                     "scope": scope,
-                    "target_pruning_ratio": ratio,  # Fraction removed (0.3 = 30% removed)
-                    "filter_retention": 1.0 - ratio,  # Fraction retained (0.7 = 70% retained)
+                    "target_pruning_ratio_removed": ratio,  # Fraction REMOVED (0.3 = 30% removed, 70% retained)
+                    "target_pruning_ratio_retained": 1.0 - ratio,  # Fraction RETAINED (0.7 = 70% retained)
+                    # Note: Many papers use "pruning ratio" to mean fraction retained, hence both fields for clarity
                     # Baseline metrics
                     "baseline_accuracy": baseline_acc,
                     "baseline_flops_m": baseline_flops_m,
                     "baseline_parameters_m": baseline_params_m,
                     "baseline_inference_latency_ms": baseline_latency_ms,
-                    # Pruned metrics
+                    # Pruned metrics (after fine-tuning)
                     "accuracy_after_pruning": pruned_acc,
                     "flops_after_pruning_m": pruned_flops_m,
                     "parameters_after_pruning_m": pruned_params_m,
-                    # Drop metrics
+                    # Pre-fine-tuning metrics (isolates pruning quality from fine-tuning recovery)
+                    "accuracy_before_finetune": pre_finetune_acc,
+                    "accuracy_drop_before_finetune_pct": accuracy_drop_before_finetune_pct,
+                    # Drop metrics (after fine-tuning)
                     "accuracy_drop_pct": accuracy_drop_pct,
                     "flops_drop_pct": flops_drop_pct,
                     "parameters_drop_pct": params_drop_pct,
@@ -193,15 +213,28 @@ def run():
                     os.path.join(exp_dir, "model.pth")
                 )
                 save_metrics(exp_dir, metrics)
+                
+                # Save layer-wise pruning information (useful for analysis)
+                layer_info = {
+                    "pre_pruning": pre_pruning_layer_info,
+                    "post_pruning": post_pruning_layer_info,
+                    "method": method,
+                    "scope": scope,
+                    "target_ratio_removed": ratio
+                }
+                with open(os.path.join(exp_dir, "layer_info.json"), "w") as f:
+                    json.dump(layer_info, f, indent=2)
+                
                 summary_rows.append(metrics)
 
     # Global Summary
-    with open(os.path.join(RESULTS_DIR, "summary.csv"), "w", newline="") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=summary_rows[0].keys()
-        )
-        writer.writeheader()
-        writer.writerows(summary_rows)
+    if summary_rows:
+        with open(os.path.join(RESULTS_DIR, "summary.csv"), "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
+            writer.writeheader()
+            writer.writerows(summary_rows)
+    else:
+        print("No experiments ran — nothing to write to summary.csv")
 
 
 if __name__ == "__main__":
