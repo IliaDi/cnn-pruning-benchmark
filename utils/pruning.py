@@ -20,7 +20,7 @@ def apply_pruning_method(
         method: Pruning method name (e.g., "ApoZ", "ThiNet", etc.)
         scope: Pruning scope ("local" or "global")
         target_ratio: Fraction of filters/channels to REMOVE (0.3 = remove 30%, keep 70%)
-        limit_batches: Optional limit on batches for calibration (for quick testing)
+        limit_batches: Optional limit on batches for calibration data (e.g. when using a separate quick-test script)
     
     Returns:
         model: Structurally pruned model (architecture modified, not just weights masked)

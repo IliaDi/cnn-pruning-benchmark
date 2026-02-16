@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-def train(model, dataloader, epochs=1, lr=0.001, limit_batches=None, fine_tune=True):
+def train(model, dataloader, epochs=1, lr=0.001, fine_tune=True):
     """
     Train/fine-tune model on CIFAR-10.
     
@@ -48,10 +48,7 @@ def train(model, dataloader, epochs=1, lr=0.001, limit_batches=None, fine_tune=T
     
     model.train()
     for epoch in range(epochs):
-        for i, (inputs, targets) in enumerate(dataloader):
-            if limit_batches is not None and i >= limit_batches:
-                break
-
+        for inputs, targets in dataloader:
             inputs = inputs.to(device)
             targets = targets.to(device)
 

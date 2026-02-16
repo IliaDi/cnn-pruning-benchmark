@@ -14,6 +14,7 @@ data/
 
 # Results
 results/
+results_quick_test/
 results_debug/
 
 # OS / IDE
@@ -27,5 +28,5 @@ results_debug/
 # Ignore literature folder
 Literature/
 
-# Smoke test
-smoke_test.py
+# Quick test (local only, not tracked)
+run_quick_test.py
