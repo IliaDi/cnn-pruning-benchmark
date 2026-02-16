@@ -21,5 +21,11 @@ results_debug/
 .vscode/
 .idea/
 
+# Ignore all PDFs
+*.pdf
+
+# Ignore literature folder
+Literature/
+
 # Smoke test
 smoke_test.py

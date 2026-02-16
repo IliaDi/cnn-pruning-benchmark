@@ -67,6 +67,10 @@ def run():
     }
     save_metrics(baseline_dir, baseline_metrics)
 
+    # Convert baseline to millions for display
+    baseline_params_m = baseline_params / 1e6
+    baseline_flops_m = baseline_flops / 1e6
+
     summary_rows = []
 
     # Pruning Experiments
@@ -98,16 +102,33 @@ def run():
 
                 pruned_acc = evaluate_accuracy(model, test_loader)
 
+                # Convert to millions
+                pruned_params_m = pruned_params / 1e6
+                pruned_flops_m = pruned_flops / 1e6
+
+                # Calculate drops
+                accuracy_drop_pct = 100.0 * (baseline_acc - pruned_acc)
+                params_drop_pct = 100.0 * (1.0 - pruned_params / baseline_params)
+                flops_drop_pct = 100.0 * (1.0 - pruned_flops / baseline_flops)
+
                 metrics = {
                     "method": method,
                     "scope": scope,
                     "target_pruning_ratio": ratio,
+                    # Baseline metrics
+                    "baseline_accuracy": baseline_acc,
+                    "baseline_flops_m": baseline_flops_m,
+                    "baseline_parameters_m": baseline_params_m,
+                    # Pruned metrics
+                    "accuracy_after_pruning": pruned_acc,
+                    "flops_after_pruning_m": pruned_flops_m,
+                    "parameters_after_pruning_m": pruned_params_m,
+                    # Drop metrics
+                    "accuracy_drop_pct": accuracy_drop_pct,
+                    "flops_drop_pct": flops_drop_pct,
+                    "parameters_drop_pct": params_drop_pct,
+                    # Raw values (for precision)
                     "accuracy": pruned_acc,
-                    "accuracy_drop": baseline_acc - pruned_acc,
-                    "params_removed_pct":
-                        100.0 * (1.0 - pruned_params / baseline_params),
-                    "flops_reduction_pct":
-                        100.0 * (1.0 - pruned_flops / baseline_flops),
                     "parameters": pruned_params,
                     "flops": pruned_flops,
                     "timestamp": datetime.now().isoformat()
