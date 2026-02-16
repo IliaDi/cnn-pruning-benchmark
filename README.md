@@ -8,7 +8,8 @@ on CNNs using VGG16 and CIFAR-10.
 - `models/` – model definitions
 - `utils/` – training, metrics, pruning utilities
 
-## Notes
-- Models are trained from scratch on CIFAR-10
+## Approach
+- **Baseline Model**: ImageNet pretrained VGG-16, adapted classifier head for 10 classes, fine-tuned on CIFAR-10 to convergence
+- This provides strong pretrained features while being fully grounded in CIFAR-10
+- CIFAR-10 images are resized to 224x224 to match ImageNet VGG-16 input size
 - No post-pruning fine-tuning is applied by default
-- Debug/smoke-test scripts are excluded from the repository

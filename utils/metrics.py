@@ -27,7 +27,7 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters())
 
 
-def compute_flops(model, input_size=(1, 3, 32, 32)):
+def compute_flops(model, input_size=(1, 3, 224, 224)):
     dummy = torch.randn(input_size).to(
         next(model.parameters()).device
     )

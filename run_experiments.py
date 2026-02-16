@@ -6,7 +6,7 @@ import torch
 import numpy as np
 from datetime import datetime
 
-from config import METHODS, PRUNING_RATIOS, RESULTS_DIR, SEED
+from config import METHODS, PRUNING_RATIOS, RESULTS_DIR, SEED, BASELINE_TRAIN_EPOCHS
 
 from utils.metrics import (
     evaluate_accuracy,
@@ -20,7 +20,6 @@ from models.vgg import vgg16
 
 
 # Experiment Configuration
-FINE_TUNE = False          # Explicitly disabled for primary benchmark
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -51,8 +50,13 @@ def run():
     baseline_dir = os.path.join(RESULTS_DIR, "baseline")
     os.makedirs(baseline_dir, exist_ok=True)
 
-    model = vgg16(num_classes=10).to(DEVICE)
-    train(model, train_loader)
+    # Load ImageNet pretrained VGG-16 and adapt for CIFAR-10
+    model = vgg16(num_classes=10, pretrained=True).to(DEVICE)
+    
+    # Fine-tune on CIFAR-10 to convergence
+    print(f"Fine-tuning ImageNet pretrained VGG-16 on CIFAR-10 for {BASELINE_TRAIN_EPOCHS} epochs...")
+    train(model, train_loader, epochs=BASELINE_TRAIN_EPOCHS, fine_tune=True)
+    print("Fine-tuning complete.")
 
     baseline_acc = evaluate_accuracy(model, test_loader)
     baseline_params = count_parameters(model)
@@ -84,7 +88,8 @@ def run():
                 )
                 os.makedirs(exp_dir, exist_ok=True)
 
-                model = vgg16(num_classes=10).to(DEVICE)
+                # Load fine-tuned baseline model
+                model = vgg16(num_classes=10, pretrained=False).to(DEVICE)
                 model.load_state_dict(
                     torch.load(os.path.join(baseline_dir, "model.pth")),
                     strict=False
