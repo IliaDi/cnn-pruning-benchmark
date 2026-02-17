@@ -50,24 +50,41 @@ def run():
     set_seed(SEED)
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
+    print("=" * 60)
+    print("FULL EXPERIMENTS")
+    print(f"  Device: {DEVICE}")
+    print(f"  Baseline: {BASELINE_TRAIN_EPOCHS} epoch(s)")
+    print(f"  Fine-tune: {POST_PRUNING_FINE_TUNE_EPOCHS} epoch(s)  |  Ratios: {PRUNING_RATIOS}")
+    print("=" * 60)
+
+    print("\n[1/4] Building data loaders...")
     train_loader, test_loader = get_cifar10_loaders(use_augmentation=True)
+    print(f"  Train: {len(train_loader)} batches")
+    print(f"  Test:  {len(test_loader)} batches")
+
     baseline_dir = os.path.join(RESULTS_DIR, "baseline")
     os.makedirs(baseline_dir, exist_ok=True)
 
+    print("\n[2/4] PHASE 1 — Baseline model")
+    print("  Loading VGG-16 (ImageNet pretrained, 10 classes)...")
     model = vgg16(num_classes=10, pretrained=True).to(DEVICE)
-    print(f"Fine-tuning ImageNet pretrained VGG-16 on CIFAR-10 for {BASELINE_TRAIN_EPOCHS} epochs...")
-    train(model, train_loader, epochs=BASELINE_TRAIN_EPOCHS, fine_tune=True)
-    print("Fine-tuning complete.")
+    print(f"  Training baseline for {BASELINE_TRAIN_EPOCHS} epoch(s)...")
+    train(model, train_loader, epochs=BASELINE_TRAIN_EPOCHS, fine_tune=True, verbose=True)
+    print("  Baseline training done.")
 
+    print("  Evaluating baseline on test set...")
     baseline_acc = evaluate_accuracy(model, test_loader)
     baseline_params = count_parameters(model)
     # Save state_dict before compute_flops — thop.profile() adds total_ops/total_params to the model
+    print("  Saving baseline model...")
     torch.save(model.state_dict(), os.path.join(baseline_dir, "model.pth"))
     baseline_flops = compute_flops(model)
-    print("Measuring baseline inference latency...")
+    print(f"  Baseline results: acc={100*baseline_acc:.2f}%  params={baseline_params/1e6:.2f}M  FLOPs={baseline_flops/1e6:.0f}M")
+    print("  Measuring baseline inference latency...")
     baseline_latency_ms = measure_inference_latency(model, batch_size=1)
-    print(f"Baseline inference latency: {baseline_latency_ms:.3f} ms per sample")
+    print(f"  Baseline inference latency: {baseline_latency_ms:.3f} ms per sample")
 
+    print("  Saving baseline metrics...")
     baseline_metrics = {
         "accuracy": baseline_acc,
         "parameters": baseline_params,
@@ -81,13 +98,18 @@ def run():
     baseline_flops_m = baseline_flops / 1e6
 
     summary_rows = []
+    total_experiments = sum(len(methods) * len(PRUNING_RATIOS) for _, methods in METHODS.items() if methods)
+    exp_counter = [0]
 
+    print(f"\n[3/4] PHASE 2 — Pruning experiments (total: {total_experiments})")
     for scope, methods in METHODS.items():
         for method in methods:
             for ratio in PRUNING_RATIOS:
+                exp_counter[0] += 1
+                n = exp_counter[0]
                 removal_pct = ratio * 100
                 retention_pct = (1 - ratio) * 100
-                print(f"[{method} | {scope}] Removing {removal_pct:.0f}% of filters (retaining {retention_pct:.0f}%)")
+                print(f"\n  --- Experiment {n}/{total_experiments}: {method} | {scope} | remove {removal_pct:.0f}% (retain {retention_pct:.0f}%) ---")
 
                 exp_dir = os.path.join(
                     RESULTS_DIR, method, f"ratio_{ratio}"
@@ -97,16 +119,23 @@ def run():
                 # Re-seed for reproducibility (each experiment should start from same random state)
                 set_seed(SEED)
 
+                print("  Loading baseline model...")
                 # Load fine-tuned baseline model (filter out any keys added by thop.profile in old checkpoints)
                 model = vgg16(num_classes=10, pretrained=False).to(DEVICE)
                 ckpt = torch.load(os.path.join(baseline_dir, "model.pth"), map_location=DEVICE)
                 model_keys = set(model.state_dict().keys())
                 ckpt_filtered = {k: v for k, v in ckpt.items() if k in model_keys}
+                if len(ckpt_filtered) < len(ckpt):
+                    extra = set(ckpt.keys()) - model_keys
+                    print(f"  (Dropping non-model keys: {extra})")
                 model.load_state_dict(ckpt_filtered, strict=True)
+                print("  Model loaded.")
 
+                print("  Gathering pre-pruning layer info...")
                 # Measure pre-pruning layer structure for logging
                 pre_pruning_layer_info = get_layer_info(model)
 
+                print(f"  Applying {method} pruning (scope={scope}, ratio={ratio})...")
                 # Apply structural pruning (must physically remove filters, not just mask them)
                 apply_pruning_method(
                     model=model,
@@ -114,15 +143,19 @@ def run():
                     scope=scope,
                     target_ratio=ratio
                 )
+                print("  Pruning applied.")
 
+                print("  Gathering post-pruning layer info...")
                 # Measure post-pruning layer structure for logging
                 post_pruning_layer_info = get_layer_info(model)
 
+                print("  Evaluating accuracy after pruning (before fine-tune)...")
                 # Measure accuracy immediately after pruning (before fine-tuning)
                 # This isolates the quality of each method's importance criterion
                 pre_finetune_acc = evaluate_accuracy(model, test_loader)
+                print(f"  Accuracy after pruning: {100*pre_finetune_acc:.2f}%")
 
-                print(f"  Fine-tuning pruned model for {POST_PRUNING_FINE_TUNE_EPOCHS} epochs...")
+                print(f"  Fine-tuning pruned model for {POST_PRUNING_FINE_TUNE_EPOCHS} epoch(s)...")
                 model, fine_tune_metrics = fine_tune_post_pruning(
                     model=model,
                     train_loader=train_loader,
@@ -131,9 +164,10 @@ def run():
                     epochs=POST_PRUNING_FINE_TUNE_EPOCHS,
                     lr=POST_PRUNING_FINE_TUNE_LR,
                     momentum=POST_PRUNING_FINE_TUNE_MOMENTUM,
-                    weight_decay=POST_PRUNING_FINE_TUNE_WEIGHT_DECAY
+                    weight_decay=POST_PRUNING_FINE_TUNE_WEIGHT_DECAY,
+                    verbose=True
                 )
-                print(f"  Fine-tuning complete.")
+                print("  Fine-tuning done.")
                 
                 # Check if accuracy recovered
                 if fine_tune_metrics['epochs_to_recover'] is not None:
@@ -141,6 +175,7 @@ def run():
                 else:
                     print(f"  Accuracy did not fully recover (final: {fine_tune_metrics['final_accuracy']:.4f}, baseline: {baseline_acc:.4f})")
 
+                print("  Computing final metrics...")
                 pruned_params = count_parameters(model)
                 pruned_flops = compute_flops(model)
                 print("  Measuring inference latency...")
@@ -148,6 +183,7 @@ def run():
                 print(f"  Inference latency: {inference_latency_ms:.3f} ms per sample")
 
                 pruned_acc = evaluate_accuracy(model, test_loader)
+                print(f"  Pruned model: acc={100*pruned_acc:.2f}%  params={pruned_params/1e6:.2f}M  FLOPs={pruned_flops/1e6:.0f}M")
 
                 # Convert to millions
                 pruned_params_m = pruned_params / 1e6
@@ -197,6 +233,7 @@ def run():
                     "timestamp": datetime.now().isoformat()
                 }
 
+                print("  Saving pruned model and metrics...")
                 torch.save(
                     model.state_dict(),
                     os.path.join(exp_dir, "model.pth")
@@ -215,13 +252,20 @@ def run():
                     json.dump(layer_info, f, indent=2)
                 
                 summary_rows.append(metrics)
+                print(f"  Experiment {n}/{total_experiments} saved to {exp_dir}")
 
+    print("\n[4/4] Writing summary...")
     # Global Summary
     if summary_rows:
         with open(os.path.join(RESULTS_DIR, "summary.csv"), "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
             writer.writeheader()
             writer.writerows(summary_rows)
+        print("\n" + "=" * 60)
+        print("FULL EXPERIMENTS COMPLETE")
+        print(f"  Results dir: {RESULTS_DIR}/")
+        print(f"  Summary CSV: {RESULTS_DIR}/summary.csv")
+        print("=" * 60)
     else:
         print("No experiments ran — nothing to write to summary.csv")
 
