@@ -1,8 +1,6 @@
 """
 dropnet.py  –  DropNet pruning for VGG-16 / CIFAR-10 benchmark
-================================================================
-Reference
----------
+
 Tan & Motani (2020). "DropNet: Reducing Neural Network Complexity via
 Iterative Pruning."  ICML 2020.  arXiv:2207.06646
 
@@ -12,45 +10,6 @@ DropNet scores each filter by its *expected absolute post-activation value*
 across all training samples:
 
     E(f_i) = (1/T) * sum_j  mean_{H,W} |ReLU(conv_i(x_j))|
-
-Filters with the LOWEST score are considered least important (they "fire"
-rarely and receive only small gradient updates during back-propagation) and
-are therefore pruned first.
-
-Design choices for this thesis implementation
-----------------------------------------------
-1.  **Scoring mode: ``min_layer`` (layer-wise) by default**
-    The paper tests both global (``min``) and layer-wise (``min_layer``)
-    ranking.  For large VGG-style models the paper consistently reports
-    ``min_layer`` as the best variant (Sec. 4.4, Figs C11/C23), so we
-    default to ``scope="local"``.  ``scope="global"`` is also supported for
-    ablation studies.
-
-2.  **Single-shot pruning (no iterative retraining)**
-    DropNet's original algorithm uses an iterative cycle of:
-        prune → retrain → prune → retrain → ...
-    For a *fair benchmark*, baking retraining into the pruning step would
-    give DropNet a systematic advantage over simpler one-shot methods (APoZ,
-    Entropy, HRank, etc.).  We therefore use a *single forward pass* to
-    collect scores and remove all target channels at once.  Fine-tuning is
-    applied *externally* via the standardised ``fine_tune_post_pruning()``
-    protocol — identical for all 12 methods.
-
-3.  **Structural pruning reuses APoZ weight-surgery helpers**
-    The channel-removal logic (Conv2d → BN → Conv2d → … → Linear surgery)
-    is already correct and tested in ``apoz.py``.  Reusing those helpers
-    guarantees identical behaviour and avoids duplicated maintenance.
-
-Integration with the thesis pipeline
--------------------------------------
-Called by ``pruning.py``'s ``apply_pruning_method()`` dispatcher:
-
-    from utils.dropnet import apply_dropnet_pruning
-    model = apply_dropnet_pruning(model, calib_loader, target_ratio,
-                                  scope, device, limit_batches)
-
-Returns a structurally pruned ``nn.Module``; the caller is responsible for
-running ``fine_tune_post_pruning()`` afterwards.
 """
 
 from __future__ import annotations
@@ -71,9 +30,9 @@ from utils.apoz import (
 )
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Score computation
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def compute_dropnet_scores(
     model: nn.Module,
@@ -105,10 +64,8 @@ def compute_dropnet_scores(
     """
     model.eval()
 
-    # ------------------------------------------------------------------
-    # Map each conv-layer name to the module we should hook.
+    # ── Map each conv-layer name to the module we should hook ────────────────────
     # For VGG-16 the pattern is  features.{i}:Conv2d  →  features.{i+1}:ReLU
-    # ------------------------------------------------------------------
     hook_targets: Dict[str, nn.Module] = {}
 
     if hasattr(model, "features") and isinstance(model.features, nn.Sequential):
@@ -138,9 +95,7 @@ def compute_dropnet_scores(
                         break
                 hook_targets[name] = target
 
-    # ------------------------------------------------------------------
-    # Accumulate weighted-mean absolute activations
-    # ------------------------------------------------------------------
+    # ── Accumulate weighted-mean absolute activations ───────────────────────────
     accum: Dict[str, torch.Tensor] = {}
     counts: Dict[str, int] = {}
     handles: List = []
@@ -181,9 +136,9 @@ def compute_dropnet_scores(
     }
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Keep-mask construction
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _build_keep_masks_layer(
     scores: Dict[str, torch.Tensor],
@@ -255,9 +210,9 @@ def _build_keep_masks_global(
     return masks
 
 
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
-# ---------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def apply_dropnet_pruning(
     model: nn.Module,

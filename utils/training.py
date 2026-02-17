@@ -25,7 +25,6 @@ def train(model, dataloader, epochs=1, lr=0.001, fine_tune=True, verbose=False):
     
     if fine_tune:
         # Fine-tuning: lower LR for pretrained features, higher for new classifier
-        # This is a common practice when fine-tuning pretrained models
         # torchvision VGG-16 has 'features' (conv layers) and 'classifier' (FC layers)
         if hasattr(model, 'features') and hasattr(model, 'classifier'):
             feature_params = list(model.features.parameters())
@@ -85,11 +84,6 @@ def train(model, dataloader, epochs=1, lr=0.001, fine_tune=True, verbose=False):
 def fine_tune_post_pruning(model, train_loader, test_loader, baseline_accuracy, epochs=30, lr=0.001, momentum=0.9, weight_decay=5e-4, verbose=False):
     """
     Standardized post-pruning fine-tuning protocol applied identically to all methods.
-    
-    This ensures fair comparison - some methods (e.g. AOFP, ThiNet) bake iterative
-    fine-tuning into their pruning loop, while simpler methods like APoZ do not.
-    Using each method's "default parameters" would give systematic advantage to
-    more complex methods.
     
     Protocol:
     - Optimizer: SGD with momentum 0.9

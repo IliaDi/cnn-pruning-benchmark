@@ -40,9 +40,6 @@ def measure_inference_latency(model, batch_size=1, num_warmup=10, num_iterations
     """
     Measure inference latency (wall-clock time) on a fixed GPU.
     
-    FLOPs ≠ actual speed due to hardware efficiency, memory access patterns, etc.
-    This metric distinguishes methods that have similar FLOPs but different actual speeds.
-    
     Args:
         model: Model to measure
         batch_size: Batch size for inference (default: 1 for single-image latency)

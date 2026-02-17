@@ -1,6 +1,5 @@
 import torch
 
-
 def apply_pruning_method(
     model,
     method,
@@ -12,7 +11,7 @@ def apply_pruning_method(
     """
     Apply structural pruning to the model.
     
-    CRITICAL: This must perform HARD structural pruning that physically removes
+    This must perform HARD structural pruning that physically removes
     filters and reshapes weight tensors. Soft masks (zeroing weights but keeping
     layer sizes) are NOT sufficient for accurate parameter/FLOPs reduction reporting.
     

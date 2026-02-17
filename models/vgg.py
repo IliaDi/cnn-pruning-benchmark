@@ -11,7 +11,6 @@ def vgg16(num_classes=10, pretrained=True):
     2. Replace classifier head for 10 classes (CIFAR-10)
     3. Fine-tune on CIFAR-10 to convergence
     
-    This gives strong pretrained features while being fully grounded in CIFAR-10.
     Input images are resized to 224x224 to match ImageNet VGG-16 architecture.
     """
     # Load ImageNet pretrained VGG-16

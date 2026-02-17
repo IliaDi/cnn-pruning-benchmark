@@ -80,7 +80,6 @@ class APoZCalculator:
         total    — total (samples × spatial positions) observations
 
     APoZ[c] = zeros[c] / total  ∈ [0, 1]
-    Higher APoZ → more frequently zero → more redundant → higher pruning priority.
     """
 
     def __init__(self, model: nn.Module, device: torch.device):
@@ -240,7 +239,6 @@ def get_prune_mask(
     """
     Build a boolean keep-mask aligned with the paper's criterion.
 
-    Paper (Sec 3.2): "pruning the neurons whose APoZ is *larger than* …"
     → channels with APoZ > threshold are pruned (strict inequality).
     → channels with APoZ ≤ threshold are kept.
 
