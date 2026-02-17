@@ -6,7 +6,8 @@ def apply_pruning_method(
     method,
     scope,
     target_ratio,
-    limit_batches=None
+    limit_batches=None,
+    calib_loader=None
 ):
     """
     Apply structural pruning to the model.
@@ -21,17 +22,21 @@ def apply_pruning_method(
         scope: Pruning scope ("local" or "global")
         target_ratio: Fraction of filters/channels to REMOVE (0.3 = remove 30%, keep 70%)
         limit_batches: Optional limit on batches for calibration data (e.g. when using a separate quick-test script)
+        calib_loader: Optional calibration dataloader. If None, creates a new test loader.
+                     Should use test data with no augmentation for consistent APoZ scores.
     
     Returns:
         model: Structurally pruned model (architecture modified, not just weights masked)
     """
     if method == "ApoZ":
         from utils.apoz import apply_apoz_pruning
-        from utils.data import get_cifar10_loaders
         
-        # Get a calibration dataloader for APoZ computation
-        # Use test loader (no augmentation) for consistent APoZ scores
-        _, calib_loader = get_cifar10_loaders(batch_size=128, use_augmentation=False)
+        # Use provided calibration loader, or create one if not provided
+        if calib_loader is None:
+            from utils.data import get_cifar10_loaders
+            # Get a calibration dataloader for APoZ computation
+            # Use test loader (no augmentation) for consistent APoZ scores
+            _, calib_loader = get_cifar10_loaders(batch_size=128, use_augmentation=False)
         
         # Apply APoZ pruning
         model = apply_apoz_pruning(

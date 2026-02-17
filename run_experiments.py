@@ -137,11 +137,13 @@ def run():
 
                 print(f"  Applying {method} pruning (scope={scope}, ratio={ratio})...")
                 # Apply structural pruning (must physically remove filters, not just mask them)
+                # Use test_loader for calibration (no augmentation, consistent with evaluation)
                 apply_pruning_method(
                     model=model,
                     method=method,
                     scope=scope,
-                    target_ratio=ratio
+                    target_ratio=ratio,
+                    calib_loader=test_loader
                 )
                 print("  Pruning applied.")
 

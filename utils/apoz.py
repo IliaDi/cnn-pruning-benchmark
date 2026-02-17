@@ -3,491 +3,533 @@ APoZ (Average Percentage of Zeros) Pruning
 Based on: "Network Trimming: A Data-Driven Neuron Pruning Approach
            towards Efficient Deep Architectures" (Hu et al., 2016)
 
-This module implements APoZ-based structural pruning that physically removes
-filters/channels from the model architecture.
+Paper alignment notes
+─────────────────────
+Hu et al. define APoZ as (Eq. 1):
+
+    APoZ_c^(i) = ( Σ_k Σ_j 1[O_{c,j}^(i)(k) == 0] ) / (N × M)
+
+where O_c^(i) is the POST-ReLU output of channel c in layer i, N is the
+number of validation samples, and M is the spatial dimension (H×W for conv,
+1 for a FC neuron).
+
+Key design decisions
+────────────────────
+1. HOOKS ON ReLU, NOT Conv2d
+   Hooks are attached to the nn.ReLU module that immediately follows each
+   Conv2d (or hidden Linear) so that activations are measured AFTER the
+   non-linearity — exactly matching Eq. 1.  A direct-hook fallback on the
+   Conv2d output is used only when no ReLU sibling is found; in that case
+   clamping to [0,∞) gives the identical zero-count.
+
+2. OUTPUT LAYER EXCLUDED
+   The final classification layer is excluded from both APoZ measurement and
+   pruning, matching the paper's Table 1 footnote ("except for the last one").
+   Its input dimension is updated at the end to stay shape-consistent.
+
+3. THRESHOLD — QUANTILE vs. MEAN+STD
+   Paper (Sec 3.2): prune channels with APoZ > mean + 1 std.
+   Thesis protocol: use the (1 − target_ratio) quantile so all 12 methods
+   are compared at identical compression ratios.  compute_threshold_paper()
+   preserves the paper's original criterion for reference/ablation.
+
+4. STRUCTURAL (HARD) PRUNING
+   Channels are physically removed from weight tensors — not soft-masked —
+   so that parameter and FLOPs counts reflect actual compression.
 """
 
 import torch
 import torch.nn as nn
-import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Utility helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _is_output_layer(name: str, model: nn.Module) -> bool:
+    """True iff `name` is the last nn.Linear in the model."""
+    all_linears = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
+    return bool(all_linears) and name == all_linears[-1]
+
+
+def _get_module_at_path(model: nn.Module, name: str) -> nn.Module:
+    """Return the live module at dotted path (e.g. 'classifier.3')."""
+    m = model
+    for part in name.split("."):
+        m = getattr(m, part)
+    return m
+
+
+def _find_next_relu(
+    named_list: List[Tuple[str, nn.Module]],
+    current_idx: int,
+) -> Tuple[Optional[str], Optional[nn.Module]]:
+    """
+    Scan forward from current_idx for the first nn.ReLU that is a sibling
+    (same parent prefix) of the current module.  Looks at most 3 steps ahead.
+    Returns (name, module) or (None, None).
+    """
+    parent_prefix = ".".join(named_list[current_idx][0].split(".")[:-1])
+    for j in range(current_idx + 1, min(current_idx + 4, len(named_list))):
+        cand_name, cand_mod = named_list[j]
+        cand_prefix = ".".join(cand_name.split(".")[:-1])
+        if isinstance(cand_mod, nn.ReLU) and cand_prefix == parent_prefix:
+            return cand_name, cand_mod
+    return None, None
+
+
+def get_prunable_layers(model: nn.Module) -> List[Tuple[str, nn.Module]]:
+    """
+    Return (name, module) pairs for all Conv2d and hidden Linear layers in
+    forward order, excluding the final classification layer.
+
+    Paper: APoZ is computed (and pruning applied) to all layers "except for
+    the last one" (Table 1 footnote).
+    """
+    prunable = []
+    for name, module in model.named_modules():
+        if isinstance(module, (nn.Conv2d, nn.Linear)):
+            if _is_output_layer(name, model):
+                continue
+            prunable.append((name, module))
+    return prunable
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# APoZ computation
+# ─────────────────────────────────────────────────────────────────────────────
 
 class APoZCalculator:
     """
-    Computes APoZ (Average Percentage of Zeros) for each channel/filter in the model.
-    
-    APoZ measures how often a neuron/channel outputs zero activations across the dataset.
-    Higher APoZ indicates a less important channel that can be pruned.
-    
-    APoZ_c^(i) = Σ_k Σ_j 𝟙[O_c,j(k)==0] / (N × M)
-    
-    Where:
-    - N = number of samples
-    - M = spatial size (H×W for conv, 1 for linear)
-    - O_c,j(k) = activation of channel c at spatial position j for sample k
+    Computes per-channel APoZ scores (Hu et al. 2016, Eq. 1).
+
+    Measurement is taken from POST-ReLU activations by hooking the nn.ReLU
+    module that immediately follows each Conv2d or hidden Linear layer.
+    The final classification layer is excluded.
+
+    For each hooked layer we accumulate:
+        zeros[c] — cumulative count of zero activations for channel c
+        total    — total (samples × spatial positions) observations
+
+    APoZ[c] = zeros[c] / total  ∈ [0, 1]
+    Higher APoZ → more frequently zero → more redundant → higher pruning priority.
     """
 
     def __init__(self, model: nn.Module, device: torch.device):
         self.model = model
         self.device = device
-        self._hooks = []
-        self._stats = {}  # name → {"zeros": Tensor|None, "total": int}
+        self._hooks: List = []
+        self._stats: Dict[str, Dict] = {}   # layer_name → {zeros, total}
         self._register_hooks()
 
+    # ── Hook registration ─────────────────────────────────────────────────────
+
     def _register_hooks(self):
-        """Register forward hooks on all Conv2d and Linear layers."""
-        for name, module in self.model.named_modules():
-            if isinstance(module, (nn.Conv2d, nn.Linear)):
-                self._stats[name] = {"zeros": None, "total": 0}
-                h = module.register_forward_hook(self._make_hook(name))
-                self._hooks.append(h)
+        named = list(self.model.named_modules())
+        for idx, (name, module) in enumerate(named):
+            if isinstance(module, nn.Conv2d):
+                self._attach(named, idx, name, is_conv=True)
+            elif isinstance(module, nn.Linear) and not _is_output_layer(name, self.model):
+                self._attach(named, idx, name, is_conv=False)
 
-    def _make_hook(self, name):
-        """Create a forward hook that tracks zero activations."""
-        def hook(module, inp, output):
-            # Clamp to ensure non-negative (ReLU guard)
-            act = torch.clamp(output.detach(), min=0.0)
-            
-            if act.dim() == 4:  # Conv2d: (B, C, H, W)
-                B, C, H, W = act.shape
-                # Count zeros per channel across batch and spatial dimensions
-                zeros_ch = (act == 0).float().sum(dim=(0, 2, 3))  # (C,)
-                total_ch = B * H * W
-            else:  # Linear: (B, C)
-                # Count zeros per channel across batch dimension
-                zeros_ch = (act == 0).float().sum(dim=0)  # (C,)
-                total_ch = act.size(0)
+    def _attach(self, named, idx, layer_name, is_conv):
+        """Try to hook the downstream ReLU; fall back to hooking the layer itself."""
+        if layer_name in self._stats:
+            return  # already registered
+        self._stats[layer_name] = {"zeros": None, "total": 0}
 
-            # Accumulate statistics
-            if self._stats[name]["zeros"] is None:
-                self._stats[name]["zeros"] = zeros_ch.cpu()
-            else:
-                self._stats[name]["zeros"] += zeros_ch.cpu()
-            self._stats[name]["total"] += total_ch
-        
-        return hook
+        relu_name, relu_mod = _find_next_relu(named, idx)
+        if relu_mod is not None:
+            # Hook post-ReLU output — exact match to paper's definition
+            def make_relu_hook(lname, conv):
+                def hook(mod, inp, out):
+                    self._accumulate(lname, out.detach(), is_conv=conv)
+                return hook
+            h = relu_mod.register_forward_hook(make_relu_hook(layer_name, is_conv))
+        else:
+            # Fallback: hook the layer itself and clamp
+            # ReLU(x) == 0  ⟺  x ≤ 0, so clamp(x, min=0) gives same zero-count
+            def make_direct_hook(lname, conv):
+                def hook(mod, inp, out):
+                    clamped = torch.clamp(out.detach(), min=0.0)
+                    self._accumulate(lname, clamped, is_conv=conv)
+                return hook
+            h = named[idx][1].register_forward_hook(make_direct_hook(layer_name, is_conv))
+
+        self._hooks.append(h)
+
+    # ── Statistics accumulation ───────────────────────────────────────────────
+
+    def _accumulate(self, layer_name: str, act: torch.Tensor, is_conv: bool):
+        """
+        Update zero counts for `layer_name`.
+
+        Conv tensors: shape (B, C, H, W) — sum zeros over B, H, W → per-channel.
+        Linear tensors: shape (B, C)     — sum zeros over B          → per-neuron.
+
+        'total' counts the denominator N×M from Eq. 1:
+            Conv:   M = H×W spatial positions, accumulated over N samples.
+            Linear: M = 1,   accumulated over N samples.
+        """
+        s = self._stats[layer_name]
+        if is_conv and act.dim() == 4:
+            B, C, H, W = act.shape
+            zeros_ch = (act == 0).float().sum(dim=(0, 2, 3))  # (C,)
+            total    = B * H * W
+        else:
+            zeros_ch = (act == 0).float().sum(dim=0)           # (C,)
+            total    = act.size(0)
+
+        if s["zeros"] is None:
+            s["zeros"] = zeros_ch.cpu()
+        else:
+            s["zeros"] += zeros_ch.cpu()
+        s["total"] += total
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     def reset(self):
-        """Reset accumulated statistics."""
         for s in self._stats.values():
             s["zeros"] = None
             s["total"] = 0
 
-    def compute(self, dataloader, limit_batches: Optional[int] = None) -> Dict[str, torch.Tensor]:
+    def compute(
+        self,
+        dataloader,
+        limit_batches: Optional[int] = None,
+    ) -> Dict[str, torch.Tensor]:
         """
-        Compute APoZ scores for all layers by passing data through the model.
-        
+        Forward-pass data and return per-layer APoZ score tensors.
+
         Args:
-            dataloader: DataLoader to compute APoZ over
-            limit_batches: Optional limit on number of batches to process (for quick testing)
-            
+            dataloader:    Calibration data (validation / test split).
+            limit_batches: Cap on batches processed (quick-test mode).
+
         Returns:
-            Dictionary mapping layer names to APoZ scores (Tensor of shape [num_channels])
+            Dict[layer_name, Tensor of shape [num_channels]] with values in [0,1].
         """
         self.reset()
         self.model.eval()
-        
         with torch.no_grad():
             for i, (imgs, _) in enumerate(dataloader):
                 if limit_batches is not None and i >= limit_batches:
                     break
                 self.model(imgs.to(self.device))
 
-        # Compute APoZ = zeros / total
-        apoz_dict = {}
-        for name, s in self._stats.items():
-            if s["zeros"] is not None and s["total"] > 0:
-                apoz_dict[name] = s["zeros"] / s["total"]
-        
-        return apoz_dict
+        return {
+            name: s["zeros"] / s["total"]
+            for name, s in self._stats.items()
+            if s["zeros"] is not None and s["total"] > 0
+        }
 
     def remove_hooks(self):
-        """Remove all registered hooks."""
         for h in self._hooks:
             h.remove()
         self._hooks.clear()
 
 
-def get_prune_mask(apoz: torch.Tensor, threshold: float) -> torch.Tensor:
+# ─────────────────────────────────────────────────────────────────────────────
+# Threshold & mask
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_threshold(
+    apoz: torch.Tensor,
+    target_ratio: float,
+    scope: str = "local",
+) -> float:
     """
-    Get pruning mask based on APoZ scores and threshold.
-    
+    Compute the APoZ threshold that removes exactly `target_ratio` of channels
+    per layer (thesis standardised-ratio protocol).
+
     Args:
-        apoz: APoZ scores for channels (Tensor of shape [num_channels])
-        threshold: Threshold value - channels with APoZ > threshold will be pruned
-        
+        apoz:         Per-channel APoZ scores, shape [num_channels].
+        target_ratio: Fraction of channels to REMOVE (0.3 → remove 30%).
+        scope:        "local" = per-layer independent threshold (default).
+
     Returns:
-        Boolean tensor: True = keep, False = prune
+        Scalar threshold T; channels with APoZ > T are pruned.
     """
-    mask = apoz <= threshold
-    n_kept = mask.sum().item()
-    n_pruned = (~mask).sum().item()
+    percentile = 1.0 - target_ratio   # e.g. target_ratio=0.3 → 70th percentile
+    return torch.quantile(apoz, percentile).item()
+
+
+def compute_threshold_paper(apoz: torch.Tensor) -> float:
+    """
+    Paper-original threshold (Hu et al. 2016, Sec 3.2):
+        T = mean(APoZ) + std(APoZ)
+
+    Kept for ablation / reference.  NOT used in the main benchmarking loop
+    because it does not guarantee a fixed compression ratio.
+    """
+    return (apoz.mean() + apoz.std()).item()
+
+
+def get_prune_mask(
+    apoz: torch.Tensor,
+    threshold: float,
+    layer_name: str = "",
+) -> torch.Tensor:
+    """
+    Build a boolean keep-mask aligned with the paper's criterion.
+
+    Paper (Sec 3.2): "pruning the neurons whose APoZ is *larger than* …"
+    → channels with APoZ > threshold are pruned (strict inequality).
+    → channels with APoZ ≤ threshold are kept.
+
+    Args:
+        apoz:       APoZ scores, shape [num_channels].
+        threshold:  Scalar threshold.
+        layer_name: Optional string for console logging.
+
+    Returns:
+        Boolean tensor of shape [num_channels]; True = keep.
+    """
+    mask    = apoz <= threshold
+    n_kept  = mask.sum().item()
     n_total = len(apoz)
-    print(f"    threshold={threshold:.4f}  "
-          f"kept={n_kept}/{n_total} ({100*n_kept/n_total:.1f}%)  "
-          f"pruned={n_pruned}/{n_total} ({100*n_pruned/n_total:.1f}%)")
+    tag     = f"[{layer_name}] " if layer_name else ""
+    print(
+        f"    {tag}threshold={threshold:.4f}  "
+        f"kept={n_kept}/{n_total} ({100*n_kept/n_total:.1f}%)  "
+        f"pruned={n_total-n_kept}/{n_total} ({100*(n_total-n_kept)/n_total:.1f}%)"
+    )
     return mask
 
 
-def compute_threshold(apoz: torch.Tensor, target_ratio: float, scope: str = "local") -> float:
-    """
-    Compute threshold to achieve target pruning ratio.
-    
-    Args:
-        apoz: APoZ scores for channels (Tensor of shape [num_channels])
-        target_ratio: Fraction of channels to REMOVE (0.3 = remove 30%, keep 70%)
-        scope: "local" or "global" (for future use)
-        
-    Returns:
-        Threshold value
-    """
-    if scope == "local":
-        # For local pruning, use percentile-based threshold
-        # target_ratio=0.3 means remove top 30% (highest APoZ = least important)
-        percentile = (1.0 - target_ratio) * 100  # Keep bottom 70% = remove top 30%
-        threshold = torch.quantile(apoz, percentile / 100.0).item()
-    else:
-        # Global scope would require aggregating across all layers
-        # For now, same as local
-        percentile = (1.0 - target_ratio) * 100
-        threshold = torch.quantile(apoz, percentile / 100.0).item()
-    
-    return threshold
+# ─────────────────────────────────────────────────────────────────────────────
+# Structural weight surgery
+# ─────────────────────────────────────────────────────────────────────────────
 
-
-def get_prunable_layers(model: nn.Module) -> List[Tuple[str, nn.Module]]:
+def prune_conv2d_layer(
+    module: nn.Conv2d,
+    keep_out: torch.Tensor,
+    keep_in: Optional[torch.Tensor] = None,
+) -> nn.Conv2d:
     """
-    Get list of prunable layers (Conv2d and Linear) with their names.
-    
-    Args:
-        model: PyTorch model
-        
-    Returns:
-        List of (name, module) tuples for prunable layers
+    Return a new Conv2d with output channels restricted to `keep_out` and,
+    optionally, input channels restricted to `keep_in` (propagated from the
+    previous layer's output mask).
     """
-    prunable = []
-    for name, module in model.named_modules():
-        if isinstance(module, (nn.Conv2d, nn.Linear)):
-            prunable.append((name, module))
-    return prunable
+    out_idx = torch.where(keep_out)[0].tolist()
+    in_idx  = torch.where(keep_in)[0].tolist() if keep_in is not None else None
 
-
-def _get_module_at_path(model: nn.Module, name: str) -> nn.Module:
-    """Return the module at the given path (e.g. 'classifier.0')."""
-    m = model
-    for p in name.split("."):
-        m = getattr(m, p)
-    return m
-
-
-def prune_conv2d_layer(module: nn.Conv2d, keep_channels: torch.Tensor, 
-                      prev_keep_channels: Optional[torch.Tensor] = None) -> nn.Conv2d:
-    """
-    Structurally prune a Conv2d layer by removing output channels.
-    Optionally also prune input channels if previous layer was pruned.
-    
-    Args:
-        module: Conv2d module to prune
-        keep_channels: Boolean tensor indicating which output channels to keep
-        prev_keep_channels: Boolean tensor for previous layer's kept channels (for input pruning)
-        
-    Returns:
-        New Conv2d module with pruned channels
-    """
-    keep_out_indices = torch.where(keep_channels)[0].tolist()
-    num_out = len(keep_out_indices)
-    
-    # Determine input channels
-    if prev_keep_channels is not None:
-        keep_in_indices = torch.where(prev_keep_channels)[0].tolist()
-        num_in = len(keep_in_indices)
-    else:
-        keep_in_indices = None
-        num_in = module.in_channels
-    
-    # Create new Conv2d
-    new_module = nn.Conv2d(
-        in_channels=num_in,
-        out_channels=num_out,
-        kernel_size=module.kernel_size,
-        stride=module.stride,
-        padding=module.padding,
-        dilation=module.dilation,
-        groups=module.groups,
-        bias=module.bias is not None
+    new = nn.Conv2d(
+        in_channels  = len(in_idx) if in_idx is not None else module.in_channels,
+        out_channels = len(out_idx),
+        kernel_size  = module.kernel_size,
+        stride       = module.stride,
+        padding      = module.padding,
+        dilation     = module.dilation,
+        groups       = module.groups,
+        bias         = module.bias is not None,
     )
-    
-    # Copy weights
-    if keep_in_indices is not None:
-        # Prune both input and output channels
-        new_module.weight.data = module.weight.data[keep_out_indices][:, keep_in_indices].clone()
-    else:
-        # Only prune output channels
-        new_module.weight.data = module.weight.data[keep_out_indices].clone()
-    
+    w = module.weight.data[out_idx]               # (kept_out, in, kH, kW)
+    new.weight.data = (w[:, in_idx] if in_idx is not None else w).clone()
     if module.bias is not None:
-        new_module.bias.data = module.bias.data[keep_out_indices].clone()
-    
-    return new_module
+        new.bias.data = module.bias.data[out_idx].clone()
+    return new
 
 
-def prune_linear_layer(module: nn.Linear, keep_channels: torch.Tensor,
-                      prev_keep_channels: Optional[torch.Tensor] = None,
-                      is_output: bool = False,
-                      in_features_override: Optional[int] = None) -> nn.Linear:
+def prune_linear_layer(
+    module: nn.Linear,
+    keep_out: torch.Tensor,
+    keep_in: Optional[torch.Tensor] = None,
+    in_features_override: Optional[int] = None,
+) -> nn.Linear:
     """
-    Structurally prune a Linear layer.
-
-    For non-output layers: prunes both input and output dimensions.
-    For the output layer: keeps all output neurons (classes), but STILL updates
-    in_features to match whatever the previous layer now emits, so shapes remain
-    consistent after structural pruning of preceding layers.
+    Return a new hidden Linear with output neurons restricted to `keep_out`
+    and input features trimmed to match the previous (already-replaced) layer.
 
     Args:
-        module: Linear module to prune
-        keep_channels: Boolean tensor indicating which output channels to keep.
-                       For the output layer this is ignored (all outputs kept).
-        prev_keep_channels: Boolean tensor for previous layer's kept channels
-                            (used for input-dimension weight indexing).
-        is_output: If True this is the final classification layer; do NOT prune
-                   output neurons, but DO update in_features.
-        in_features_override: If set, use this value as the new in_features
-                              (e.g. from previous layer's actual out_features in
-                              the live model after earlier replacements).
-
-    Returns:
-        New Linear module with correctly sized weight tensors.
+        module:              Original Linear.
+        keep_out:            Boolean [out_features] — which outputs to keep.
+        keep_in:             Boolean [in_features]  — which inputs were kept
+                             in the previous layer (for weight column selection).
+        in_features_override: Exact in_features of the replacement layer when
+                              the previous layer was already structurally updated.
     """
-    if is_output:
-        # ── Output layer ────────────────────────────────────────────────────
-        # Keep ALL output neurons (classes), update in_features only.
-        num_out = module.out_features          # e.g. 10 for CIFAR-10
+    out_idx = torch.where(keep_out)[0].tolist()
+    in_idx  = torch.where(keep_in)[0].tolist() if keep_in is not None else None
+    num_in  = (in_features_override if in_features_override is not None
+               else (len(in_idx) if in_idx is not None else module.in_features))
 
-        # Determine new in_features and which original input columns to keep
-        if in_features_override is not None:
-            num_in = in_features_override
-            keep_in_indices = (
-                torch.where(prev_keep_channels)[0].tolist()
-                if prev_keep_channels is not None
-                else None
-            )
-        elif prev_keep_channels is not None:
-            keep_in_indices = torch.where(prev_keep_channels)[0].tolist()
-            num_in = len(keep_in_indices)
-        else:
-            keep_in_indices = None
-            num_in = module.in_features
-
-        new_module = nn.Linear(num_in, num_out, bias=module.bias is not None)
-
-        if keep_in_indices is not None:
-            new_module.weight.data = module.weight.data[:, keep_in_indices].clone()
-        else:
-            new_module.weight.data = module.weight.data.clone()
-
-        if module.bias is not None:
-            new_module.bias.data = module.bias.data.clone()
-
-        return new_module
-
-    # ── Hidden layer ─────────────────────────────────────────────────────────
-    keep_out_indices = torch.where(keep_channels)[0].tolist()
-    num_out = len(keep_out_indices)
-
-    # Determine input features: prefer override (from actual previous layer in model), else from prev mask
-    if in_features_override is not None:
-        num_in = in_features_override
-        keep_in_indices = (
-            torch.where(prev_keep_channels)[0].tolist()
-            if prev_keep_channels is not None
-            else None
-        )
-    elif prev_keep_channels is not None:
-        keep_in_indices = torch.where(prev_keep_channels)[0].tolist()
-        num_in = len(keep_in_indices)
-    else:
-        keep_in_indices = None
-        num_in = module.in_features
-
-    new_module = nn.Linear(num_in, num_out, bias=module.bias is not None)
-
-    if keep_in_indices is not None:
-        new_module.weight.data = module.weight.data[keep_out_indices][:, keep_in_indices].clone()
-    else:
-        new_module.weight.data = module.weight.data[keep_out_indices].clone()
-
+    new = nn.Linear(num_in, len(out_idx), bias=module.bias is not None)
+    w   = module.weight.data[out_idx]             # (kept_out, original_in)
+    new.weight.data = (w[:, in_idx] if in_idx is not None else w).clone()
     if module.bias is not None:
-        new_module.bias.data = module.bias.data[keep_out_indices].clone()
+        new.bias.data = module.bias.data[out_idx].clone()
+    return new
 
-    return new_module
 
-
-def apply_apoz_pruning(model: nn.Module, dataloader, target_ratio: float, 
-                      scope: str = "local", device: Optional[torch.device] = None,
-                      limit_batches: Optional[int] = None) -> nn.Module:
+def _update_output_layer(
+    module: nn.Linear,
+    keep_in: Optional[torch.Tensor],
+    in_features_override: Optional[int] = None,
+) -> nn.Linear:
     """
-    Apply APoZ-based structural pruning to the model.
-    
-    This function:
-    1. Computes APoZ scores for all prunable layers
-    2. Determines which channels to prune based on target_ratio
-    3. Physically removes pruned channels from the model architecture
-    
+    Resize the output (classification) layer's INPUT dimension only.
+
+    Paper: the final layer's output neurons (num_classes) are NEVER pruned.
+    We only update in_features so the model remains runnable after the
+    preceding hidden layer was structurally shrunk.
+    """
+    in_idx = torch.where(keep_in)[0].tolist() if keep_in is not None else None
+    num_in = (in_features_override if in_features_override is not None
+              else (len(in_idx) if in_idx is not None else module.in_features))
+
+    new = nn.Linear(num_in, module.out_features, bias=module.bias is not None)
+    w   = module.weight.data                      # (num_classes, original_in)
+    new.weight.data = (w[:, in_idx] if in_idx is not None else w.clone())
+    if module.bias is not None:
+        new.bias.data = module.bias.data.clone()
+    return new
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
+def apply_apoz_pruning(
+    model: nn.Module,
+    dataloader,
+    target_ratio: float,
+    scope: str = "local",
+    device: Optional[torch.device] = None,
+    limit_batches: Optional[int] = None,
+) -> nn.Module:
+    """
+    Apply APoZ-based structural filter pruning to *model*.
+
+    Implements the pipeline from Hu et al. (2016), Sec 3.2, adapted for the
+    thesis's standardised fixed-ratio benchmarking protocol:
+
+      1. Calibration forward pass → accumulate post-ReLU zero-activation stats.
+      2. Compute per-layer APoZ scores (Eq. 1).
+      3. Per-layer threshold = (1 − target_ratio) quantile of APoZ scores.
+      4. Build boolean keep-masks (APoZ > threshold → prune).
+      5. Structurally remove pruned channels in forward order, propagating
+         dimension changes so consecutive layers remain consistent.
+      6. Resize the final classification layer's input (no output neuron pruning).
+
     Args:
-        model: PyTorch model to prune
-        dataloader: DataLoader for computing APoZ scores (typically validation/test set)
-        target_ratio: Fraction of channels to REMOVE (0.3 = remove 30%, keep 70%)
-        scope: "local" (per-layer) or "global" (across all layers) pruning
-        device: Device to run computation on (if None, uses model's device)
-        limit_batches: Optional limit on number of batches for APoZ computation (for quick testing)
-        
+        model:         PyTorch model (VGG-16).
+        dataloader:    Calibration loader (test/val; no augmentation).
+        target_ratio:  Fraction of channels to remove per layer (0.3 → 30%).
+        scope:         "local" = independent per-layer threshold (default).
+        device:        Computation device; inferred from model parameters if None.
+        limit_batches: Cap on calibration batches (quick-test mode).
+
     Returns:
-        Structurally pruned model
+        The structurally pruned model (modified in-place and returned).
     """
     if device is None:
         device = next(model.parameters()).device
-    
-    print(f"  Computing APoZ scores...")
+
+    # ── Steps 1–2: APoZ scores ────────────────────────────────────────────────
+    print("  Computing APoZ scores...")
     if limit_batches is not None:
-        print(f"    (Limited to {limit_batches} batches for quick testing)")
-    calculator = APoZCalculator(model, device)
-    apoz_dict = calculator.compute(dataloader, limit_batches=limit_batches)
-    calculator.remove_hooks()
-    
-    # Get prunable layers in forward order
-    prunable_layers = get_prunable_layers(model)
-    
-    print(f"  Pruning layers (target ratio: {target_ratio:.1%} removal)...")
-    
-    # For each layer, compute threshold and create pruning mask
-    masks = {}
-    for name, module in prunable_layers:
+        print(f"    (Limited to {limit_batches} calibration batches)")
+    calc     = APoZCalculator(model, device)
+    apoz_dict = calc.compute(dataloader, limit_batches=limit_batches)
+    calc.remove_hooks()
+
+    # ── Steps 3–4: thresholds + keep-masks ───────────────────────────────────
+    prunable = get_prunable_layers(model)   # excludes final classifier layer
+    print(f"  Building pruning masks (target: {target_ratio:.0%} removed per layer)...")
+
+    masks: Dict[str, torch.Tensor] = {}
+    for name, module in prunable:
         if name not in apoz_dict:
+            print(f"    [{name}] WARNING: no APoZ scores — skipping this layer.")
             continue
-            
-        apoz = apoz_dict[name]
-        
-        if scope == "local":
-            # Local pruning: each layer prunes independently
-            threshold = compute_threshold(apoz, target_ratio, scope="local")
-            mask = get_prune_mask(apoz, threshold)
-        else:
-            # Global pruning: use global threshold across all layers
-            # For now, same as local (can be enhanced later)
-            threshold = compute_threshold(apoz, target_ratio, scope="local")
-            mask = get_prune_mask(apoz, threshold)
-        
-        masks[name] = mask
-    
-    # ── Apply pruning masks in forward order ─────────────────────────────────
-    # prev_keep_channels: boolean mask of the *output* channels kept by the
-    # most-recently-processed layer; used to update the *input* side of the
-    # next layer so weight tensors stay consistent after structural removal.
-    prev_keep_channels = None   # None → previous layer was not structurally changed
+        thresh     = compute_threshold(apoz_dict[name], target_ratio, scope)
+        masks[name] = get_prune_mask(apoz_dict[name], thresh, layer_name=name)
 
-    n_layers = len(prunable_layers)
-    for i, (name, module) in enumerate(prunable_layers):
-        is_output_layer = (i == n_layers - 1)  # never prune outputs of the final classifier
+    # ── Steps 5–6: structural weight surgery in forward order ─────────────────
+    #
+    # prev_keep tracks the boolean keep-mask for the OUTPUTS of the most recently
+    # processed layer.  It is used to trim the INPUT side of the next layer.
+    prev_keep: Optional[torch.Tensor] = None
 
-        # ── Navigate to parent container ─────────────────────────────────────
-        parts = name.split('.')
+    for i, (name, module) in enumerate(prunable):
+
+        # Navigate to parent container and integer index
+        parts  = name.split(".")
         parent = model
-        for part in parts[:-1]:
-            parent = getattr(parent, part)
+        for p in parts[:-1]:
+            parent = getattr(parent, p)
         layer_idx = int(parts[-1])
 
-        # ── Conv2d ───────────────────────────────────────────────────────────
+        # ── Conv2d ────────────────────────────────────────────────────────────
         if isinstance(module, nn.Conv2d):
-            if name in masks:
-                keep_channels = masks[name]
-                pruned_module = prune_conv2d_layer(module, keep_channels, prev_keep_channels)
-                parent[layer_idx] = pruned_module
-                prev_keep_channels = keep_channels
-            else:
-                # Not pruned, but record full mask so next layer can update inputs
-                prev_keep_channels = torch.ones(module.out_channels, dtype=torch.bool)
+            keep_out = masks.get(name, torch.ones(module.out_channels, dtype=torch.bool))
+            parent[layer_idx] = prune_conv2d_layer(module, keep_out, keep_in=prev_keep)
+            prev_keep = keep_out
 
-        # ── Linear ───────────────────────────────────────────────────────────
+        # ── Hidden Linear ─────────────────────────────────────────────────────
         elif isinstance(module, nn.Linear):
-            # Decide whether we need to prune outputs of this layer.
-            # The output (classification) layer NEVER has its output neurons pruned;
-            # it only needs its input dimension updated if a preceding layer changed.
-            if is_output_layer:
-                # Build a keep-all mask over outputs so prune_linear_layer knows
-                # we want every output neuron retained.
-                keep_channels = torch.ones(module.out_features, dtype=torch.bool)
-            elif name in masks:
-                keep_channels = masks[name]
+            keep_out  = masks.get(name, torch.ones(module.out_features, dtype=torch.bool))
+
+            # Does this Linear immediately follow a Conv2d?
+            # Input is a flattened spatial feature map: in_features = C × H × W.
+            # The channel-level prev_keep mask must be expanded to all H×W positions.
+            prev_name, prev_orig = prunable[i - 1] if i > 0 else (None, None)
+            follows_conv = prev_orig is not None and isinstance(prev_orig, nn.Conv2d)
+
+            if follows_conv and prev_keep is not None:
+                # prev_orig.out_channels = channel count BEFORE pruning
+                spatial  = module.in_features // prev_orig.out_channels
+                kept_ch  = torch.where(prev_keep)[0].tolist()
+                flat_idx = torch.tensor(
+                    [c * spatial + s for c in kept_ch for s in range(spatial)],
+                    dtype=torch.long,
+                )
+                out_idx    = torch.where(keep_out)[0].tolist()
+                new_module = nn.Linear(
+                    len(kept_ch) * spatial, len(out_idx),
+                    bias=module.bias is not None,
+                )
+                new_module.weight.data = module.weight.data[out_idx][:, flat_idx].clone()
+                if module.bias is not None:
+                    new_module.bias.data = module.bias.data[out_idx].clone()
+
             else:
-                keep_channels = torch.ones(module.out_features, dtype=torch.bool)
+                # Linear → Linear: fetch live out_features from the already-replaced
+                # previous layer so dimensions are guaranteed to match.
+                in_feat_live = None
+                if prev_name is not None:
+                    in_feat_live = _get_module_at_path(model, prev_name).out_features
 
-            # ── Determine new in_features ────────────────────────────────────
-            # Case A: immediately follows a Conv2d — must account for H×W flattening.
-            if i > 0 and isinstance(prunable_layers[i - 1][1], nn.Conv2d):
-                prev_conv_name, prev_conv_orig = prunable_layers[i - 1]
-                orig_out_ch = prev_conv_orig.out_channels   # channels *before* pruning
-                spatial_size = module.in_features // orig_out_ch  # H×W (e.g. 49 for 7×7)
-
-                if prev_keep_channels is not None:
-                    # Build the index list that maps kept (channel, spatial) pairs
-                    # in the original flattened feature vector to contiguous positions.
-                    keep_ch_indices = torch.where(prev_keep_channels)[0].tolist()
-                    keep_indices_flat = torch.tensor(
-                        [c * spatial_size + s
-                         for c in keep_ch_indices
-                         for s in range(spatial_size)],
-                        dtype=torch.long
-                    )
-                    new_in_features = len(keep_ch_indices) * spatial_size
-                else:
-                    keep_indices_flat = None
-                    new_in_features = module.in_features
-
-                if is_output_layer:
-                    # Only update in_features; keep all output neurons.
-                    new_module = nn.Linear(new_in_features, module.out_features,
-                                           bias=module.bias is not None)
-                    if keep_indices_flat is not None:
-                        new_module.weight.data = module.weight.data[:, keep_indices_flat].clone()
-                    else:
-                        new_module.weight.data = module.weight.data.clone()
-                    if module.bias is not None:
-                        new_module.bias.data = module.bias.data.clone()
-                    pruned_module = new_module
-                else:
-                    keep_out_indices = torch.where(keep_channels)[0].tolist()
-                    new_module = nn.Linear(new_in_features, len(keep_out_indices),
-                                           bias=module.bias is not None)
-                    if keep_indices_flat is not None:
-                        new_module.weight.data = module.weight.data[keep_out_indices][:, keep_indices_flat].clone()
-                    else:
-                        new_module.weight.data = module.weight.data[keep_out_indices].clone()
-                    if module.bias is not None:
-                        new_module.bias.data = module.bias.data[keep_out_indices].clone()
-                    pruned_module = new_module
-
-            # Case B: follows another Linear layer.
-            else:
-                # Fetch the *current* (already-replaced) previous Linear in the model
-                # to get its true out_features after earlier structural pruning.
-                prev_name = prunable_layers[i - 1][0]
-                prev_layer_live = _get_module_at_path(model, prev_name)
-                in_features_from_prev = prev_layer_live.out_features
-
-                pruned_module = prune_linear_layer(
-                    module, keep_channels, prev_keep_channels,
-                    is_output=is_output_layer,
-                    in_features_override=in_features_from_prev
+                new_module = prune_linear_layer(
+                    module, keep_out,
+                    keep_in=prev_keep,
+                    in_features_override=in_feat_live,
                 )
 
-            parent[layer_idx] = pruned_module
+            parent[layer_idx] = new_module
+            prev_keep = keep_out
 
-            # Update prev_keep_channels for the NEXT layer's input dimension.
-            # For the output layer there is no next layer, so this is moot;
-            # for hidden layers we pass the output mask forward.
-            if not is_output_layer:
-                prev_keep_channels = keep_channels
+    # ── Step 6: update output (classification) layer's input dimension ─────────
+    # The output layer is excluded from `prunable`, so we handle it separately.
+    # We ONLY update in_features; all num_classes output neurons are kept intact.
+    all_linears = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
+    if all_linears:
+        out_name  = all_linears[-1]
+        out_parts = out_name.split(".")
+        out_par   = model
+        for p in out_parts[:-1]:
+            out_par = getattr(out_par, p)
+        out_idx_int = int(out_parts[-1])
+        out_mod     = out_par[out_idx_int]
 
-    print(f"  Pruning complete.")
+        # in_features = out_features of the last prunable layer (already replaced)
+        new_in = None
+        if prunable:
+            new_in = _get_module_at_path(model, prunable[-1][0]).out_features
+
+        out_par[out_idx_int] = _update_output_layer(out_mod, prev_keep,
+                                                     in_features_override=new_in)
+
+    print("  Pruning complete.")
     return model
