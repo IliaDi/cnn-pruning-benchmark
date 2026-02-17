@@ -58,7 +58,7 @@ def run():
     print("=" * 60)
 
     print("\n[1/4] Building data loaders...")
-    train_loader, test_loader = get_cifar10_loaders(use_augmentation=True)
+    train_loader, test_loader = get_cifar10_loaders(use_augmentation=True, num_workers=4)
     print(f"  Train: {len(train_loader)} batches")
     print(f"  Test:  {len(test_loader)} batches")
 
@@ -252,6 +252,16 @@ def run():
                 }
                 with open(os.path.join(exp_dir, "layer_info.json"), "w") as f:
                     json.dump(layer_info, f, indent=2)
+                
+                # Save fine-tuning curve (accuracy per epoch) for analysis
+                fine_tune_curve = {
+                    "accuracy_per_epoch": fine_tune_metrics['accuracy_per_epoch'],
+                    "baseline_accuracy": fine_tune_metrics['baseline_accuracy'],
+                    "epochs_to_recover": fine_tune_metrics['epochs_to_recover'],
+                    "total_epochs": fine_tune_metrics['total_epochs']
+                }
+                with open(os.path.join(exp_dir, "fine_tune_curve.json"), "w") as f:
+                    json.dump(fine_tune_curve, f, indent=2)
                 
                 summary_rows.append(metrics)
                 print(f"  Experiment {n}/{total_experiments} saved to {exp_dir}")

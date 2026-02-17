@@ -56,6 +56,11 @@ def measure_inference_latency(model, batch_size=1, num_warmup=10, num_iterations
     device = next(model.parameters()).device
     model.eval()
     
+    # Ensure device is a torch.device object for .type access
+    if isinstance(device, str):
+        device = torch.device(device)
+    device_type = str(device.type) if hasattr(device, 'type') else str(device)
+    
     # Create dummy input
     dummy_input = torch.randn(batch_size, *input_size).to(device)
     
@@ -65,20 +70,20 @@ def measure_inference_latency(model, batch_size=1, num_warmup=10, num_iterations
             _ = model(dummy_input)
     
     # Synchronize GPU before timing
-    if device.type == 'cuda':
+    if device_type == 'cuda':
         torch.cuda.synchronize()
     
     # Measure inference time
     times = []
     with torch.no_grad():
         for _ in range(num_iterations):
-            if device.type == 'cuda':
+            if device_type == 'cuda':
                 torch.cuda.synchronize()
             
             start_time = time.time()
             _ = model(dummy_input)
             
-            if device.type == 'cuda':
+            if device_type == 'cuda':
                 torch.cuda.synchronize()
             
             end_time = time.time()

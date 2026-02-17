@@ -2,7 +2,7 @@ import torch
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 
-def get_cifar10_loaders(batch_size=128, limit_batches=None, use_augmentation=True):
+def get_cifar10_loaders(batch_size=128, limit_batches=None, use_augmentation=True, num_workers=0):
     """
     CIFAR-10 data loaders with transforms for ImageNet pretrained VGG-16.
     
@@ -13,6 +13,7 @@ def get_cifar10_loaders(batch_size=128, limit_batches=None, use_augmentation=Tru
         batch_size: Batch size for data loaders
         limit_batches: Limit number of batches (for debugging)
         use_augmentation: If True, apply data augmentation (random crop, horizontal flip) to training set
+        num_workers: Number of worker processes for data loading (0 = single-threaded, 4+ recommended for full experiments)
     """
     # Test/validation transform (no augmentation)
     test_transform = transforms.Compose([
@@ -50,11 +51,11 @@ def get_cifar10_loaders(batch_size=128, limit_batches=None, use_augmentation=Tru
 
     train_loader = DataLoader(
         train_set, batch_size=batch_size,
-        shuffle=True, num_workers=0
+        shuffle=True, num_workers=num_workers
     )
     test_loader = DataLoader(
         test_set, batch_size=batch_size,
-        shuffle=False, num_workers=0
+        shuffle=False, num_workers=num_workers
     )
 
     return train_loader, test_loader
