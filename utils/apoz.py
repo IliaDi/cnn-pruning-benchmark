@@ -3,39 +3,6 @@ APoZ (Average Percentage of Zeros) Pruning
 Based on: "Network Trimming: A Data-Driven Neuron Pruning Approach
            towards Efficient Deep Architectures" (Hu et al., 2016)
 
-Paper alignment notes
-─────────────────────
-Hu et al. define APoZ as (Eq. 1):
-
-    APoZ_c^(i) = ( Σ_k Σ_j 1[O_{c,j}^(i)(k) == 0] ) / (N × M)
-
-where O_c^(i) is the POST-ReLU output of channel c in layer i, N is the
-number of validation samples, and M is the spatial dimension (H×W for conv,
-1 for a FC neuron).
-
-Key design decisions
-────────────────────
-1. HOOKS ON ReLU, NOT Conv2d
-   Hooks are attached to the nn.ReLU module that immediately follows each
-   Conv2d (or hidden Linear) so that activations are measured AFTER the
-   non-linearity — exactly matching Eq. 1.  A direct-hook fallback on the
-   Conv2d output is used only when no ReLU sibling is found; in that case
-   clamping to [0,∞) gives the identical zero-count.
-
-2. OUTPUT LAYER EXCLUDED
-   The final classification layer is excluded from both APoZ measurement and
-   pruning, matching the paper's Table 1 footnote ("except for the last one").
-   Its input dimension is updated at the end to stay shape-consistent.
-
-3. THRESHOLD — QUANTILE vs. MEAN+STD
-   Paper (Sec 3.2): prune channels with APoZ > mean + 1 std.
-   Thesis protocol: use the (1 − target_ratio) quantile so all 12 methods
-   are compared at identical compression ratios.  compute_threshold_paper()
-   preserves the paper's original criterion for reference/ablation.
-
-4. STRUCTURAL (HARD) PRUNING
-   Channels are physically removed from weight tensors — not soft-masked —
-   so that parameter and FLOPs counts reflect actual compression.
 """
 
 import torch
