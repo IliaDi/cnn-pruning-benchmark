@@ -66,6 +66,14 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
   - Uses quantile-based threshold for fixed compression ratios (thesis protocol)
   - Performs structural (hard) pruning by physically removing channels
 
+- **`dropnet.py`** – DropNet pruning implementation
+  - Implements Tan & Motani (2020) "DropNet: Reducing Neural Network Complexity via Iterative Pruning"
+  - Scores filters by expected absolute post-activation value (mean |ReLU(conv(x))|)
+  - Prunes filters with lowest scores (least active filters)
+  - Supports both layer-wise (`scope="local"`, recommended) and global (`scope="global"`) ranking
+  - Single-shot pruning (no iterative retraining) for fair benchmark comparison
+  - Reuses APoZ structural pruning helpers for consistent channel removal
+
 ## Results Structure
 
 Results are organized hierarchically by method and pruning ratio:

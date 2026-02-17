@@ -28,15 +28,15 @@ def apply_pruning_method(
     Returns:
         model: Structurally pruned model (architecture modified, not just weights masked)
     """
+    # Use provided calibration loader, or create one if not provided
+    if calib_loader is None:
+        from utils.data import get_cifar10_loaders
+        # Get a calibration dataloader for pruning computation
+        # Use test loader (no augmentation) for consistent scores
+        _, calib_loader = get_cifar10_loaders(batch_size=128, use_augmentation=False)
+    
     if method == "ApoZ":
         from utils.apoz import apply_apoz_pruning
-        
-        # Use provided calibration loader, or create one if not provided
-        if calib_loader is None:
-            from utils.data import get_cifar10_loaders
-            # Get a calibration dataloader for APoZ computation
-            # Use test loader (no augmentation) for consistent APoZ scores
-            _, calib_loader = get_cifar10_loaders(batch_size=128, use_augmentation=False)
         
         # Apply APoZ pruning
         model = apply_apoz_pruning(
@@ -44,6 +44,21 @@ def apply_pruning_method(
             dataloader=calib_loader,
             target_ratio=target_ratio,
             scope=scope,
+            limit_batches=limit_batches
+        )
+        
+        return model
+    elif method == "DropNet":
+        from utils.dropnet import apply_dropnet_pruning
+        
+        # Apply DropNet pruning
+        device = next(model.parameters()).device
+        model = apply_dropnet_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope=scope,
+            device=device,
             limit_batches=limit_batches
         )
         

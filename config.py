@@ -1,7 +1,7 @@
 METHODS = {
     "local": [
         "ApoZ",
-        # "DropNet",   # TODO: not yet implemented
+        "DropNet",
         # "Entropy",   # TODO: not yet implemented
         # "HRank",     # TODO: not yet implemented
         # "CHIP",      # TODO: not yet implemented
