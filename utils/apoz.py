@@ -121,9 +121,11 @@ def get_prune_mask(apoz: torch.Tensor, threshold: float) -> torch.Tensor:
         Boolean tensor: True = keep, False = prune
     """
     mask = apoz <= threshold
+    n_kept = mask.sum().item()
     n_pruned = (~mask).sum().item()
     n_total = len(apoz)
     print(f"    threshold={threshold:.4f}  "
+          f"kept={n_kept}/{n_total} ({100*n_kept/n_total:.1f}%)  "
           f"pruned={n_pruned}/{n_total} ({100*n_pruned/n_total:.1f}%)")
     return mask
 
@@ -169,6 +171,14 @@ def get_prunable_layers(model: nn.Module) -> List[Tuple[str, nn.Module]]:
         if isinstance(module, (nn.Conv2d, nn.Linear)):
             prunable.append((name, module))
     return prunable
+
+
+def _get_module_at_path(model: nn.Module, name: str) -> nn.Module:
+    """Return the module at the given path (e.g. 'classifier.0')."""
+    m = model
+    for p in name.split("."):
+        m = getattr(m, p)
+    return m
 
 
 def prune_conv2d_layer(module: nn.Conv2d, keep_channels: torch.Tensor, 
@@ -224,51 +234,92 @@ def prune_conv2d_layer(module: nn.Conv2d, keep_channels: torch.Tensor,
 
 def prune_linear_layer(module: nn.Linear, keep_channels: torch.Tensor,
                       prev_keep_channels: Optional[torch.Tensor] = None,
-                      is_output: bool = False) -> nn.Linear:
+                      is_output: bool = False,
+                      in_features_override: Optional[int] = None) -> nn.Linear:
     """
     Structurally prune a Linear layer.
-    
+
+    For non-output layers: prunes both input and output dimensions.
+    For the output layer: keeps all output neurons (classes), but STILL updates
+    in_features to match whatever the previous layer now emits, so shapes remain
+    consistent after structural pruning of preceding layers.
+
     Args:
         module: Linear module to prune
-        keep_channels: Boolean tensor indicating which output channels to keep
-        prev_keep_channels: Boolean tensor for previous layer's kept channels (for input pruning)
-        is_output: If True, this is the final output layer (don't prune inputs)
-        
+        keep_channels: Boolean tensor indicating which output channels to keep.
+                       For the output layer this is ignored (all outputs kept).
+        prev_keep_channels: Boolean tensor for previous layer's kept channels
+                            (used for input-dimension weight indexing).
+        is_output: If True this is the final classification layer; do NOT prune
+                   output neurons, but DO update in_features.
+        in_features_override: If set, use this value as the new in_features
+                              (e.g. from previous layer's actual out_features in
+                              the live model after earlier replacements).
+
     Returns:
-        New Linear module with pruned channels
+        New Linear module with correctly sized weight tensors.
     """
+    if is_output:
+        # ── Output layer ────────────────────────────────────────────────────
+        # Keep ALL output neurons (classes), update in_features only.
+        num_out = module.out_features          # e.g. 10 for CIFAR-10
+
+        # Determine new in_features and which original input columns to keep
+        if in_features_override is not None:
+            num_in = in_features_override
+            keep_in_indices = (
+                torch.where(prev_keep_channels)[0].tolist()
+                if prev_keep_channels is not None
+                else None
+            )
+        elif prev_keep_channels is not None:
+            keep_in_indices = torch.where(prev_keep_channels)[0].tolist()
+            num_in = len(keep_in_indices)
+        else:
+            keep_in_indices = None
+            num_in = module.in_features
+
+        new_module = nn.Linear(num_in, num_out, bias=module.bias is not None)
+
+        if keep_in_indices is not None:
+            new_module.weight.data = module.weight.data[:, keep_in_indices].clone()
+        else:
+            new_module.weight.data = module.weight.data.clone()
+
+        if module.bias is not None:
+            new_module.bias.data = module.bias.data.clone()
+
+        return new_module
+
+    # ── Hidden layer ─────────────────────────────────────────────────────────
     keep_out_indices = torch.where(keep_channels)[0].tolist()
     num_out = len(keep_out_indices)
-    
-    # Determine input features
-    if prev_keep_channels is not None and not is_output:
-        # For hidden layers, use previous layer's kept channels
-        # Note: For first Linear layer after features, prev_keep_channels represents
-        # the flattened feature map channels
+
+    # Determine input features: prefer override (from actual previous layer in model), else from prev mask
+    if in_features_override is not None:
+        num_in = in_features_override
+        keep_in_indices = (
+            torch.where(prev_keep_channels)[0].tolist()
+            if prev_keep_channels is not None
+            else None
+        )
+    elif prev_keep_channels is not None:
         keep_in_indices = torch.where(prev_keep_channels)[0].tolist()
         num_in = len(keep_in_indices)
     else:
         keep_in_indices = None
         num_in = module.in_features
-    
-    # Create new Linear layer
-    new_module = nn.Linear(
-        in_features=num_in,
-        out_features=num_out,
-        bias=module.bias is not None
-    )
-    
-    # Copy weights
+
+    new_module = nn.Linear(num_in, num_out, bias=module.bias is not None)
+
     if keep_in_indices is not None:
-        # Prune both input and output features
         new_module.weight.data = module.weight.data[keep_out_indices][:, keep_in_indices].clone()
     else:
-        # Only prune output features
         new_module.weight.data = module.weight.data[keep_out_indices].clone()
-    
+
     if module.bias is not None:
         new_module.bias.data = module.bias.data[keep_out_indices].clone()
-    
+
     return new_module
 
 
@@ -329,100 +380,114 @@ def apply_apoz_pruning(model: nn.Module, dataloader, target_ratio: float,
         
         masks[name] = mask
     
-    # Apply pruning masks to layers (in forward order)
-    # Track kept channels from previous layer to update input channels
-    prev_keep_channels = None
-    
+    # ── Apply pruning masks in forward order ─────────────────────────────────
+    # prev_keep_channels: boolean mask of the *output* channels kept by the
+    # most-recently-processed layer; used to update the *input* side of the
+    # next layer so weight tensors stay consistent after structural removal.
+    prev_keep_channels = None   # None → previous layer was not structurally changed
+
+    n_layers = len(prunable_layers)
     for i, (name, module) in enumerate(prunable_layers):
-        if name not in masks:
-            continue
-        
-        mask = masks[name]
-        keep_channels = mask
-        
-        # Skip if all channels are kept
-        if keep_channels.all():
-            prev_keep_channels = keep_channels
-            continue
-        
-        # Parse layer name to navigate to module
+        is_output_layer = (i == n_layers - 1)  # never prune outputs of the final classifier
+
+        # ── Navigate to parent container ─────────────────────────────────────
         parts = name.split('.')
         parent = model
         for part in parts[:-1]:
             parent = getattr(parent, part)
         layer_idx = int(parts[-1])
-        
-        # Prune the layer
+
+        # ── Conv2d ───────────────────────────────────────────────────────────
         if isinstance(module, nn.Conv2d):
-            # Check if we're in features or classifier
-            is_in_features = parts[0] == "features"
-            
-            pruned_module = prune_conv2d_layer(module, keep_channels, prev_keep_channels)
-            parent[layer_idx] = pruned_module
-            
-            prev_keep_channels = keep_channels
-            
-        elif isinstance(module, nn.Linear):
-            # Check if this is the final output layer
-            is_output = (i == len(prunable_layers) - 1)
-            
-            # For first Linear layer after Conv2d features, handle flattened feature map
-            if i > 0 and isinstance(prunable_layers[i-1][1], nn.Conv2d):
-                # Previous layer was Conv2d (last conv in features)
-                # The Linear layer receives flattened feature map: (B, C, H, W) -> (B, C*H*W)
-                prev_name, prev_module_original = prunable_layers[i-1]
-                
-                # Get the actual current module from model (may have been pruned)
-                prev_parts = prev_name.split('.')
-                prev_parent = model
-                for part in prev_parts[:-1]:
-                    prev_parent = getattr(prev_parent, part)
-                prev_layer_idx = int(prev_parts[-1])
-                prev_conv_current = prev_parent[prev_layer_idx]
-                
-                if prev_keep_channels is not None:
-                    # Compute spatial size from original in_features
-                    # Original: C * H * W = in_features
-                    # After pruning: kept_C * H * W = new_in_features
-                    num_kept_channels = prev_keep_channels.sum().item()
-                    # Use original out_channels to compute spatial size (spatial dims don't change)
-                    spatial_size = module.in_features // prev_module_original.out_channels  # H*W (e.g., 7*7=49)
-                    new_in_features = num_kept_channels * spatial_size
-                    
-                    # Create expanded mask for flattened features
-                    # For each kept channel, keep all spatial positions
-                    keep_indices_flat = []
-                    for c_idx in range(prev_module_original.out_channels):
-                        if prev_keep_channels[c_idx]:
-                            for s_idx in range(spatial_size):
-                                keep_indices_flat.append(c_idx * spatial_size + s_idx)
-                    keep_indices_flat = torch.tensor(keep_indices_flat, dtype=torch.long)
-                    
-                    # Create pruned Linear layer
-                    keep_out_indices = torch.where(keep_channels)[0].tolist()
-                    new_linear = nn.Linear(
-                        in_features=new_in_features,
-                        out_features=len(keep_out_indices),
-                        bias=module.bias is not None
-                    )
-                    
-                    # Copy weights: select output channels and input features
-                    new_linear.weight.data = module.weight.data[keep_out_indices][:, keep_indices_flat].clone()
-                    if module.bias is not None:
-                        new_linear.bias.data = module.bias.data[keep_out_indices].clone()
-                    
-                    pruned_module = new_linear
-                else:
-                    # No previous pruning, just prune outputs
-                    pruned_module = prune_linear_layer(module, keep_channels, None, is_output)
-            else:
-                # Regular Linear layer (not first after Conv2d)
-                pruned_module = prune_linear_layer(module, keep_channels, prev_keep_channels, is_output)
-            
-            parent[layer_idx] = pruned_module
-            
-            if not is_output:
+            if name in masks:
+                keep_channels = masks[name]
+                pruned_module = prune_conv2d_layer(module, keep_channels, prev_keep_channels)
+                parent[layer_idx] = pruned_module
                 prev_keep_channels = keep_channels
-    
+            else:
+                # Not pruned, but record full mask so next layer can update inputs
+                prev_keep_channels = torch.ones(module.out_channels, dtype=torch.bool)
+
+        # ── Linear ───────────────────────────────────────────────────────────
+        elif isinstance(module, nn.Linear):
+            # Decide whether we need to prune outputs of this layer.
+            # The output (classification) layer NEVER has its output neurons pruned;
+            # it only needs its input dimension updated if a preceding layer changed.
+            if is_output_layer:
+                # Build a keep-all mask over outputs so prune_linear_layer knows
+                # we want every output neuron retained.
+                keep_channels = torch.ones(module.out_features, dtype=torch.bool)
+            elif name in masks:
+                keep_channels = masks[name]
+            else:
+                keep_channels = torch.ones(module.out_features, dtype=torch.bool)
+
+            # ── Determine new in_features ────────────────────────────────────
+            # Case A: immediately follows a Conv2d — must account for H×W flattening.
+            if i > 0 and isinstance(prunable_layers[i - 1][1], nn.Conv2d):
+                prev_conv_name, prev_conv_orig = prunable_layers[i - 1]
+                orig_out_ch = prev_conv_orig.out_channels   # channels *before* pruning
+                spatial_size = module.in_features // orig_out_ch  # H×W (e.g. 49 for 7×7)
+
+                if prev_keep_channels is not None:
+                    # Build the index list that maps kept (channel, spatial) pairs
+                    # in the original flattened feature vector to contiguous positions.
+                    keep_ch_indices = torch.where(prev_keep_channels)[0].tolist()
+                    keep_indices_flat = torch.tensor(
+                        [c * spatial_size + s
+                         for c in keep_ch_indices
+                         for s in range(spatial_size)],
+                        dtype=torch.long
+                    )
+                    new_in_features = len(keep_ch_indices) * spatial_size
+                else:
+                    keep_indices_flat = None
+                    new_in_features = module.in_features
+
+                if is_output_layer:
+                    # Only update in_features; keep all output neurons.
+                    new_module = nn.Linear(new_in_features, module.out_features,
+                                           bias=module.bias is not None)
+                    if keep_indices_flat is not None:
+                        new_module.weight.data = module.weight.data[:, keep_indices_flat].clone()
+                    else:
+                        new_module.weight.data = module.weight.data.clone()
+                    if module.bias is not None:
+                        new_module.bias.data = module.bias.data.clone()
+                    pruned_module = new_module
+                else:
+                    keep_out_indices = torch.where(keep_channels)[0].tolist()
+                    new_module = nn.Linear(new_in_features, len(keep_out_indices),
+                                           bias=module.bias is not None)
+                    if keep_indices_flat is not None:
+                        new_module.weight.data = module.weight.data[keep_out_indices][:, keep_indices_flat].clone()
+                    else:
+                        new_module.weight.data = module.weight.data[keep_out_indices].clone()
+                    if module.bias is not None:
+                        new_module.bias.data = module.bias.data[keep_out_indices].clone()
+                    pruned_module = new_module
+
+            # Case B: follows another Linear layer.
+            else:
+                # Fetch the *current* (already-replaced) previous Linear in the model
+                # to get its true out_features after earlier structural pruning.
+                prev_name = prunable_layers[i - 1][0]
+                prev_layer_live = _get_module_at_path(model, prev_name)
+                in_features_from_prev = prev_layer_live.out_features
+
+                pruned_module = prune_linear_layer(
+                    module, keep_channels, prev_keep_channels,
+                    is_output=is_output_layer,
+                    in_features_override=in_features_from_prev
+                )
+
+            parent[layer_idx] = pruned_module
+
+            # Update prev_keep_channels for the NEXT layer's input dimension.
+            # For the output layer there is no next layer, so this is moot;
+            # for hidden layers we pass the output mask forward.
+            if not is_output_layer:
+                prev_keep_channels = keep_channels
+
     print(f"  Pruning complete.")
     return model

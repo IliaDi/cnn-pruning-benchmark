@@ -61,12 +61,12 @@ def run():
 
     baseline_acc = evaluate_accuracy(model, test_loader)
     baseline_params = count_parameters(model)
+    # Save state_dict before compute_flops — thop.profile() adds total_ops/total_params to the model
+    torch.save(model.state_dict(), os.path.join(baseline_dir, "model.pth"))
     baseline_flops = compute_flops(model)
     print("Measuring baseline inference latency...")
     baseline_latency_ms = measure_inference_latency(model, batch_size=1)
     print(f"Baseline inference latency: {baseline_latency_ms:.3f} ms per sample")
-
-    torch.save(model.state_dict(), os.path.join(baseline_dir, "model.pth"))
 
     baseline_metrics = {
         "accuracy": baseline_acc,
@@ -97,13 +97,12 @@ def run():
                 # Re-seed for reproducibility (each experiment should start from same random state)
                 set_seed(SEED)
 
-                # Load fine-tuned baseline model
-                # Using strict=True ensures architecture matches - if it fails, there's a bug
+                # Load fine-tuned baseline model (filter out any keys added by thop.profile in old checkpoints)
                 model = vgg16(num_classes=10, pretrained=False).to(DEVICE)
-                model.load_state_dict(
-                    torch.load(os.path.join(baseline_dir, "model.pth")),
-                    strict=True  # Changed from False - should match exactly
-                )
+                ckpt = torch.load(os.path.join(baseline_dir, "model.pth"), map_location=DEVICE)
+                model_keys = set(model.state_dict().keys())
+                ckpt_filtered = {k: v for k, v in ckpt.items() if k in model_keys}
+                model.load_state_dict(ckpt_filtered, strict=True)
 
                 # Measure pre-pruning layer structure for logging
                 pre_pruning_layer_info = get_layer_info(model)
