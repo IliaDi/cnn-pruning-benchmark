@@ -28,7 +28,7 @@ def get_cifar10_loaders(batch_size=128, limit_batches=None, use_augmentation=Tru
     if use_augmentation:
         train_transform = transforms.Compose([
             transforms.Resize((256, 256)),  # Resize to slightly larger than target
-            transforms.RandomCrop(224, 224),  # Random crop to 224x224
+            transforms.RandomCrop(224),  # Random crop to 224x224
             transforms.RandomHorizontalFlip(),  # Horizontal flip
             transforms.ToTensor(),
             transforms.Normalize(
