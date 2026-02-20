@@ -28,6 +28,21 @@ from models.vgg import vgg16
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
+class _Tee:
+    """Write to multiple file-like objects (e.g. stdout and a log file)."""
+    def __init__(self, *files):
+        self.files = files
+
+    def write(self, obj):
+        for f in self.files:
+            f.write(obj)
+            f.flush()
+
+    def flush(self):
+        for f in self.files:
+            f.flush()
+
+
 def set_seed(seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -50,6 +65,23 @@ def run():
     set_seed(SEED)
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
+    # Redirect all prints to a log file (and keep stdout)
+    log_name = f"experiments_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    log_path = os.path.join(RESULTS_DIR, log_name)
+    log_file = open(log_path, "w", encoding="utf-8")
+    original_stdout = sys.stdout
+    sys.stdout = _Tee(original_stdout, log_file)
+    try:
+        _run_impl(log_path)
+    finally:
+        sys.stdout = original_stdout
+        log_file.close()
+        print(f"Log written to {log_path}")
+
+
+def _run_impl(log_path):
+    """Actual experiment logic (stdout is already tee'd to log file)."""
+    print(f"Log file: {log_path}")
     print("=" * 60)
     print("FULL EXPERIMENTS")
     print(f"  Device: {DEVICE}")

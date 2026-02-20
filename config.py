@@ -4,7 +4,7 @@ METHODS = {
         "DropNet",
         "Entropy",
         "HRank",
-        # "CHIP",      # TODO: not yet implemented
+        "CHIP",
         # "LRMF",      # TODO: not yet implemented
     ],
     "global": [

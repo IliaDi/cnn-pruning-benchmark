@@ -97,6 +97,21 @@ def apply_pruning_method(
         )
         
         return model
+    elif method == "CHIP":
+        from utils.chip import apply_chip_pruning
+        
+        # Apply CHIP pruning
+        device = next(model.parameters()).device
+        model = apply_chip_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope=scope,
+            device=device,
+            limit_batches=limit_batches
+        )
+        
+        return model
     else:
         # TODO: Implement other pruning methods
         # For now, return model unchanged

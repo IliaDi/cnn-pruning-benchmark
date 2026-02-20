@@ -116,6 +116,20 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
     - Paper uses ~500 images (4 batches of 128) for VGG-16 calibration
     - Reuses APoZ structural pruning helpers for consistent channel removal
 
+- **`chip.py`** – CHIP (Channel Independence-based Pruning)
+  - **Paper**: Sui et al. (2021) "CHIP: CHannel Independence-based Pruning for Compact Neural Networks" (NeurIPS 2021)
+  - **Method**: Scores filters by channel independence (CI) — how much removing a channel drops the nuclear norm of the layer's feature map matrix
+  - **Scoring** (paper Eq. 3):
+    1. Hook post-ReLU feature maps per layer: shape (B, C, H, W) → matricize to A ∈ R^{C×hw}
+    2. CI(A_i) = ‖A‖_* − ‖M_i ⊙ A‖_* (nuclear norm of full matrix minus nuclear norm with row i zeroed)
+    3. Average CI over all calibration samples
+  - **Pruning**: Channels with lowest CI (most linearly dependent on others) are pruned first
+  - **Implementation details**:
+    - Uses `torch.linalg.svdvals` for nuclear norm (sum of singular values)
+    - Supports both layer-wise (`scope="local"`, default) and global (`scope="global"`) ranking
+    - Computationally expensive (SVD per channel per image); paper uses 5 batches of 128 images
+    - Reuses APoZ structural pruning helpers for consistent channel removal
+
 ## Results Structure
 
 Results are organized hierarchically by method and pruning ratio:
