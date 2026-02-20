@@ -298,10 +298,14 @@ def _run_impl(log_path):
                         writer.writerow([epoch, acc, fine_tune_metrics['baseline_accuracy']])
                 
                 summary_rows.append(metrics)
-                print(f"  Experiment {n}/{total_experiments} saved to {exp_dir}")
+                # Update summary CSV after each experiment so partial results are saved if a later run fails
+                with open(os.path.join(RESULTS_DIR, "summary.csv"), "w", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
+                    writer.writeheader()
+                    writer.writerows(summary_rows)
+                print(f"  Experiment {n}/{total_experiments} saved to {exp_dir} (summary.csv updated)")
 
     print("\n[4/4] Writing summary...")
-    # Global Summary
     if summary_rows:
         with open(os.path.join(RESULTS_DIR, "summary.csv"), "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
