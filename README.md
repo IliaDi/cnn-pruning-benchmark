@@ -88,6 +88,19 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
     - Single-shot pruning (no iterative retraining) for fair benchmark comparison
     - Reuses APoZ structural pruning helpers for consistent channel removal
 
+- **`entropy.py`** – Entropy-based pruning
+  - **Paper**: Luo & Wu (2017) "An Entropy-based Pruning Method for CNN Compression"
+  - **Method**: Scores filters by Shannon entropy of post-activation output distribution
+  - **Scoring**: 
+    1. Global average pooling: (B, C, H, W) → (B, C)
+    2. Compute Shannon entropy H_j = -Σ p_i log(p_i) for each channel j
+    3. Bin activation values into 256 bins to estimate probability distribution
+  - **Pruning**: Channels with lowest entropy (least informative) are pruned first
+  - **Implementation details**:
+    - Supports both layer-wise (`scope="local"`) and global (`scope="global"`) ranking
+    - Uses 256 histogram bins for entropy estimation (standard practice)
+    - Reuses APoZ structural pruning helpers for consistent channel removal
+
 ## Results Structure
 
 Results are organized hierarchically by method and pruning ratio:

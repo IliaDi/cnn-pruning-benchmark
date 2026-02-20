@@ -67,6 +67,21 @@ def apply_pruning_method(
         )
         
         return model
+    elif method == "Entropy":
+        from utils.entropy import apply_entropy_pruning
+        
+        # Apply Entropy pruning
+        device = next(model.parameters()).device
+        model = apply_entropy_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope=scope,
+            device=device,
+            limit_batches=limit_batches
+        )
+        
+        return model
     else:
         # TODO: Implement other pruning methods
         # For now, return model unchanged
