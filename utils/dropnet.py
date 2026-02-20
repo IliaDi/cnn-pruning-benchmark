@@ -261,9 +261,6 @@ def apply_dropnet_pruning(
 
     # ── Step 1: Scores ────────────────────────────────────────────────────────
     print("  Computing DropNet scores (mean absolute post-ReLU activations)...")
-    if limit_batches is not None:
-        print(f"    (Limited to {limit_batches} calibration batches)")
-
     scores = compute_dropnet_scores(model, dataloader, device, limit_batches)
 
     # ── Step 2: Keep-masks ────────────────────────────────────────────────────

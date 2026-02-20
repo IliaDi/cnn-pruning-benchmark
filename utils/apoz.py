@@ -393,8 +393,6 @@ def apply_apoz_pruning(
 
     # ── Steps 1–2: APoZ scores ────────────────────────────────────────────────
     print("  Computing APoZ scores...")
-    if limit_batches is not None:
-        print(f"    (Limited to {limit_batches} calibration batches)")
     calc     = APoZCalculator(model, device)
     apoz_dict = calc.compute(dataloader, limit_batches=limit_batches)
     calc.remove_hooks()

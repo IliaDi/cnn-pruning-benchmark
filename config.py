@@ -5,7 +5,7 @@ METHODS = {
         "Entropy",
         "HRank",
         "CHIP",
-        # "LRMF",      # TODO: not yet implemented
+        "LRMF",
     ],
     "global": [
         # "NISP",      # TODO: not yet implemented

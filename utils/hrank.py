@@ -300,7 +300,6 @@ def apply_hrank_pruning(
                    ``"global"`` = joint ranking across all layers.
     device       : Compute device; inferred from model parameters if None.
     limit_batches: Cap calibration batches (quick-test mode).
-                   Paper uses 500 images (~4 batches of 128) for VGG-16.
 
     Returns
     -------
@@ -315,8 +314,6 @@ def apply_hrank_pruning(
     For VGG-16 at 224×224 input (as used in this thesis), early conv layers
     produce feature maps up to 224×224 — SVD on those is O(224³) per filter.
     The ``limit_batches`` parameter is therefore important for quick testing.
-    At full scale, the paper uses 500 images; 4 batches of 128 ≈ 512 images
-    is a good default.
     """
     if not 0.0 < target_ratio < 1.0:
         raise ValueError(f"target_ratio must be in (0, 1), got {target_ratio}")
@@ -326,12 +323,6 @@ def apply_hrank_pruning(
 
     # ── Step 1: HRank scores ──────────────────────────────────────────────────
     print("  Computing HRank scores (average feature-map rank per filter)...")
-    if limit_batches is not None:
-        print(f"    (Limited to {limit_batches} calibration batches — "
-              f"paper uses ~4 batches of 128 for VGG)")
-    else:
-        print("    (No batch limit — this may be slow for large spatial feature maps)")
-
     scores = compute_hrank_scores(model, dataloader, device, limit_batches)
 
     if not scores:

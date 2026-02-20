@@ -29,8 +29,7 @@ Intuitively:
               →  its information is already encoded elsewhere  →  PRUNE
 
 Key properties (paper, Sec. 3, Q3 & Q4):
-  • CI is stable across input batches (Pearson r > 0.85 across 5 batches).
-    5 batches of 128 images is sufficient for reliable estimation.
+  • CI is stable across input batches (Pearson r > 0.85 across batches).
   • One-shot calculation is enough; further mask adjustment via learning
     does not improve results (paper, Sec. 3 Q4 & Sec. 6.5).
 
@@ -139,7 +138,6 @@ def compute_chip_scores(
     calib_loader  : DataLoader; calibration set (no augmentation recommended).
     device        : Compute device.
     limit_batches : Stop after this many batches (quick-test mode).
-                    Paper uses 5 batches of 128 images → limit_batches=5.
 
     Returns
     -------
@@ -370,7 +368,6 @@ def apply_chip_pruning(
                    ``"global"`` = joint ranking across all layers.
     device       : Compute device; inferred from model parameters if None.
     limit_batches: Cap calibration batches (quick-test mode).
-                   Paper uses 5 batches of 128 images → limit_batches=5.
 
     Returns
     -------
@@ -398,13 +395,6 @@ def apply_chip_pruning(
 
     # ── Step 1–2: CHIP CI scores ──────────────────────────────────────────────
     print("  Computing CHIP scores (channel independence via nuclear norm)...")
-    if limit_batches is not None:
-        print(f"    (Limited to {limit_batches} calibration batches — "
-              f"paper uses 5 batches of 128 images)")
-    else:
-        print("    (No batch limit — this may be slow for large feature maps; "
-              "consider limit_batches=5)")
-
     scores = compute_chip_scores(model, dataloader, device, limit_batches)
 
     if not scores:

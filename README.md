@@ -113,7 +113,6 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
     - Uses `torch.linalg.matrix_rank` (SVD-based) for rank computation
     - Supports both layer-wise (`scope="local"`, default) and global (`scope="global"`) ranking
     - More computationally expensive than APoZ/DropNet due to per-image SVD operations
-    - Paper uses ~500 images (4 batches of 128) for VGG-16 calibration
     - Reuses APoZ structural pruning helpers for consistent channel removal
 
 - **`chip.py`** – CHIP (Channel Independence-based Pruning)
@@ -127,7 +126,21 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
   - **Implementation details**:
     - Uses `torch.linalg.svdvals` for nuclear norm (sum of singular values)
     - Supports both layer-wise (`scope="local"`, default) and global (`scope="global"`) ranking
-    - Computationally expensive (SVD per channel per image); paper uses 5 batches of 128 images
+    - Computationally expensive (SVD per channel per image)
+    - Reuses APoZ structural pruning helpers for consistent channel removal
+
+- **`lrmf.py`** – LRMF (Learned Representation Median in the Frequency domain)
+  - **Paper**: Zhang et al. (2023) "Filter Pruning via Learned Representation Median in the Frequency Domain" (IEEE Trans. Cybernetics)
+  - **Method**: Scores filters by how dissimilar each channel's feature map is from others, in the DCT (frequency) domain
+  - **Scoring**:
+    1. 2-D DCT of each channel's feature map; crop top-left quarter (low-frequency)
+    2. Pairwise Euclidean distance matrix between DCT descriptors: d_{ij} = ‖T^s(M_i) − T^s(M_j)‖_2
+    3. Row-sum: d_i = Σ_j d_{ij}; high d_i = unique → keep, low d_i = "median" → prune
+  - **Pruning**: Channels with smallest d_i (representation medians, most replaceable) are pruned first
+  - **Implementation details**:
+    - Hooks raw Conv2d outputs (pre-BN/ReLU); uses scipy.fft.dctn or NumPy fallback for DCT
+    - Supports both layer-wise (`scope="local"`, default) and global (`scope="global"`) ranking
+    - One-shot structural pruning (original repo uses iterative soft-masking); fine-tuning is external
     - Reuses APoZ structural pruning helpers for consistent channel removal
 
 ## Results Structure

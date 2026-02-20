@@ -337,9 +337,6 @@ def apply_entropy_pruning(
 
     # ── Step 1–3: Entropy scores ──────────────────────────────────────────────
     print("  Computing Entropy scores (Shannon entropy of GAP activations)...")
-    if limit_batches is not None:
-        print(f"    (Limited to {limit_batches} calibration batches)")
-
     scores = compute_entropy_scores(
         model, dataloader, device,
         limit_batches=limit_batches,
