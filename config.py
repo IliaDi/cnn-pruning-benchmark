@@ -3,7 +3,7 @@ METHODS = {
         "ApoZ",
         "DropNet",
         "Entropy",
-        # "HRank",     # TODO: not yet implemented
+        "HRank",
         # "CHIP",      # TODO: not yet implemented
         # "LRMF",      # TODO: not yet implemented
     ],

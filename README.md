@@ -101,6 +101,21 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
     - Uses 256 histogram bins for entropy estimation (standard practice)
     - Reuses APoZ structural pruning helpers for consistent channel removal
 
+- **`hrank.py`** – HRank filter pruning
+  - **Paper**: Lin et al. (2020) "HRank: Filter Pruning using High-Rank Feature Map" (CVPR 2020)
+  - **Method**: Scores filters by average numerical rank of their 2-D feature maps
+  - **Scoring**: 
+    1. Hook Conv2d outputs (pre-ReLU feature maps): shape (B, C, H, W)
+    2. For each filter j, compute matrix rank of each spatial feature map (H×W) via SVD
+    3. Average rank across all calibration images: rank_score[j] = (1/g) * Σ Rank(feature_map[t, j])
+  - **Pruning**: Filters with lowest average rank (least informative feature maps) are pruned first
+  - **Implementation details**:
+    - Uses `torch.linalg.matrix_rank` (SVD-based) for rank computation
+    - Supports both layer-wise (`scope="local"`, default) and global (`scope="global"`) ranking
+    - More computationally expensive than APoZ/DropNet due to per-image SVD operations
+    - Paper uses ~500 images (4 batches of 128) for VGG-16 calibration
+    - Reuses APoZ structural pruning helpers for consistent channel removal
+
 ## Results Structure
 
 Results are organized hierarchically by method and pruning ratio:
