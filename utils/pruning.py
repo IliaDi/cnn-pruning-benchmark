@@ -1,5 +1,10 @@
 import torch
 
+try:
+    from config import BATCH_SIZE
+except ImportError:
+    BATCH_SIZE = 64
+
 def apply_pruning_method(
     model,
     method,
@@ -32,7 +37,7 @@ def apply_pruning_method(
         from utils.data import get_cifar10_loaders
         # Get a calibration dataloader for pruning computation
         # Use test loader (no augmentation) for consistent scores
-        _, calib_loader = get_cifar10_loaders(batch_size=128, use_augmentation=False)
+        _, calib_loader = get_cifar10_loaders(batch_size=BATCH_SIZE, use_augmentation=False)
     
     if method == "ApoZ":
         from utils.apoz import apply_apoz_pruning

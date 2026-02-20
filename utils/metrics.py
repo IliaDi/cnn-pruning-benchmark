@@ -36,15 +36,23 @@ def compute_flops(model, input_size=(1, 3, 224, 224)):
     return flops
 
 
-def measure_inference_latency(model, batch_size=1, num_warmup=10, num_iterations=100, input_size=(3, 224, 224)):
+def measure_inference_latency(model, batch_size=1, num_warmup=10, num_iterations=50, input_size=(3, 224, 224)):
     """
-    Measure inference latency (wall-clock time) on a fixed GPU.
+    Measure inference latency (wall-clock time) for pure forward pass.
+    
+    This is COMPLETELY SEPARATE from training epochs - it's just repeated inference
+    calls for timing purposes. No training, no backward pass, no gradients.
+    
+    Process:
+    1. Warmup: Run inference num_warmup times (not timed) to stabilize device
+    2. Timing: Run inference num_iterations times, time each one
+    3. Average: Return average time per sample
     
     Args:
-        model: Model to measure
+        model: Model to measure (already trained - no training happens here)
         batch_size: Batch size for inference (default: 1 for single-image latency)
-        num_warmup: Number of warmup iterations to stabilize GPU
-        num_iterations: Number of iterations to average over
+        num_warmup: Number of warmup iterations to stabilize device (GPU/CPU)
+        num_iterations: Number of timed inference runs (NOT epochs - just repeated forward passes)
         input_size: Input tensor size (C, H, W)
     
     Returns:

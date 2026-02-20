@@ -58,7 +58,11 @@ def run():
     print("=" * 60)
 
     print("\n[1/4] Building data loaders...")
-    train_loader, test_loader = get_cifar10_loaders(use_augmentation=True, num_workers=4)
+    # Use num_workers=0 on macOS for compatibility (multiprocessing issues)
+    # On Linux, can use num_workers=4+ for faster data loading
+    import platform
+    num_workers = 0 if platform.system() == "Darwin" else 4
+    train_loader, test_loader = get_cifar10_loaders(use_augmentation=True, num_workers=num_workers)
     print(f"  Train: {len(train_loader)} batches")
     print(f"  Test:  {len(test_loader)} batches")
 

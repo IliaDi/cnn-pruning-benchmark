@@ -8,7 +8,7 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
 
 - **`run_experiments.py`** – Full experiment runner for production runs
   - Trains baseline model, runs all pruning experiments, saves comprehensive metrics
-  - Uses configuration from `config.py` (100 baseline epochs, 30 fine-tune epochs, ratios [0.3, 0.5, 0.7])
+  - Uses configuration from `config.py` (50 baseline epochs, 25 fine-tune epochs, batch size 64, ratios [0.3, 0.5, 0.7])
   - Results saved to `results/` directory
 
 - **`run_quick_test.py`** – Lightweight validation script for rapid iteration (not tracked)
@@ -22,7 +22,7 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
 - **`config.py`** – Centralized experiment configuration
   - Pruning methods (local/global scope)
   - Pruning ratios (fraction of channels to remove)
-  - Training hyperparameters (epochs, learning rates, etc.)
+  - Training hyperparameters (epochs, learning rates, batch size, etc.)
   - Random seed for reproducibility
 
 ### Model Definitions
@@ -37,12 +37,18 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
   - Resizes CIFAR-10 (32×32) to 224×224 for ImageNet VGG-16 compatibility
   - Training transforms: random crop, horizontal flip, ImageNet normalization
   - Test transforms: resize, ImageNet normalization (no augmentation)
-  - Configurable `num_workers` for data loading (4 for full experiments, 0 for quick test)
+  - Batch size defaults to `config.BATCH_SIZE` (64)
+  - Configurable `num_workers` for data loading (auto-detects macOS and uses 0, Linux uses 4)
 
 - **`training.py`** – Training and fine-tuning functions
-  - `train()`: Baseline fine-tuning with differential LR (features: 0.1×, classifier: 1×)
+  - `train()`: Baseline fine-tuning with differential learning rates
+    - Base LR: 0.001
+    - Features (Conv2d): 0.0001 (0.1× base) - preserves pretrained ImageNet weights
+    - Classifier (Linear): 0.001 (1× base) - adapts new 10-class head
+    - Cosine annealing scheduler
   - `fine_tune_post_pruning()`: Standardized post-pruning fine-tuning protocol
-    - Uniform LR for all parameters (pruned layers are no longer original pretrained weights)
+    - Uniform LR: 0.001 for all parameters (pruned layers are no longer original pretrained weights)
+    - Cosine annealing scheduler
     - Tracks accuracy per epoch and recovery time
     - Supports verbose logging for progress monitoring
 
@@ -59,20 +65,28 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
   - Accepts calibration data loader to avoid redundant data loading
   - `get_layer_info()`: Extracts layer-wise structure information
 
-- **`apoz.py`** – APoZ (Average Percentage of Zeros) pruning implementation
-  - Implements Hu et al. (2016) "Network Trimming" method
-  - Hooks ReLU modules to measure post-activation zeros (matches paper definition)
-  - Excludes final classification layer from pruning (only updates input dimension)
-  - Uses quantile-based threshold for fixed compression ratios (thesis protocol)
-  - Performs structural (hard) pruning by physically removing channels
+### Pruning Methods (`utils/`)
 
-- **`dropnet.py`** – DropNet pruning implementation
-  - Implements Tan & Motani (2020) "DropNet: Reducing Neural Network Complexity via Iterative Pruning"
-  - Scores filters by expected absolute post-activation value (mean |ReLU(conv(x))|)
-  - Prunes filters with lowest scores (least active filters)
-  - Supports both layer-wise (`scope="local"`, recommended) and global (`scope="global"`) ranking
-  - Single-shot pruning (no iterative retraining) for fair benchmark comparison
-  - Reuses APoZ structural pruning helpers for consistent channel removal
+- **`apoz.py`** – APoZ (Average Percentage of Zeros) pruning
+  - **Paper**: Hu et al. (2016) "Network Trimming: A Data-Driven Neuron Pruning Approach"
+  - **Method**: Measures how often channels output zeros (post-ReLU activations)
+  - **Scoring**: APoZ = (zero activations) / (total activations) per channel
+  - **Pruning**: Channels with highest APoZ (most frequently zero) are pruned first
+  - **Implementation details**:
+    - Hooks ReLU modules to measure post-activation zeros (matches paper definition)
+    - Excludes final classification layer from pruning (only updates input dimension)
+    - Uses quantile-based threshold for fixed compression ratios (thesis protocol)
+    - Performs structural (hard) pruning by physically removing channels
+
+- **`dropnet.py`** – DropNet pruning
+  - **Paper**: Tan & Motani (2020) "DropNet: Reducing Neural Network Complexity via Iterative Pruning"
+  - **Method**: Scores filters by expected absolute post-activation value
+  - **Scoring**: E(f_i) = mean |ReLU(conv_i(x))| across calibration samples
+  - **Pruning**: Filters with lowest scores (least active) are pruned first
+  - **Implementation details**:
+    - Supports both layer-wise (`scope="local"`, recommended) and global (`scope="global"`) ranking
+    - Single-shot pruning (no iterative retraining) for fair benchmark comparison
+    - Reuses APoZ structural pruning helpers for consistent channel removal
 
 ## Results Structure
 
@@ -101,10 +115,14 @@ results/
 ### Baseline Model
 
 - **ImageNet pretrained VGG-16** adapted for CIFAR-10 (10 classes)
-- Fine-tuned on CIFAR-10 to convergence (100 epochs)
+- Fine-tuned on CIFAR-10 to convergence (50 epochs)
 - Provides strong pretrained features while being fully grounded in CIFAR-10
 - CIFAR-10 images resized to 224×224 to match ImageNet VGG-16 input size
-- Differential learning rates: features at 0.1× LR, classifier at 1× LR
+- **Differential learning rates**:
+  - Features (Conv2d): 0.0001 (10× lower) - preserves pretrained ImageNet weights
+  - Classifier (Linear): 0.001 - adapts new 10-class head from scratch
+- **Cosine annealing scheduler**: LR decays smoothly from initial value to 0 over training
+- Batch size: 64
 
 ### Multiple Pruning Ratios
 
@@ -116,13 +134,17 @@ Tests 30%, 50%, and 70% filter removal to cover the compression spectrum:
 ### Standardized Post-Pruning Fine-Tuning
 
 Applied identically to all methods for fair comparison:
-- **30 epochs** of fine-tuning
+- **25 epochs** of fine-tuning
 - **SGD optimizer** with momentum 0.9
-- **Learning rate**: 0.001 (one order of magnitude below baseline LR)
-- **Uniform LR** for all parameters (pruned layers are no longer original pretrained weights)
-- **Cosine annealing** LR schedule
+- **Learning rate**: 0.001 (uniform for all parameters - pruned layers are no longer original pretrained weights)
+- **Cosine annealing scheduler**: LR decays smoothly from 0.001 to 0 over 25 epochs
 - **Weight decay**: 5e-4 (same as baseline)
-- Same batch size and data augmentation (random crop, horizontal flip) as baseline
+- Same batch size (64) and data augmentation (random crop, horizontal flip) as baseline
+
+**Learning Rate vs Scheduler:**
+- **Learning Rate (LR)**: The initial step size for gradient updates (e.g., 0.001)
+- **Scheduler**: Dynamically adjusts LR during training (e.g., CosineAnnealingLR starts at 0.001 and decays to 0)
+- Cosine annealing provides smooth decay: high LR early (fast learning), low LR later (fine-tuning)
 
 This ensures fair comparison - some methods (e.g., AOFP, ThiNet) bake fine-tuning into their pruning loop, so using their "default parameters" would give systematic advantage to more complex methods.
 
@@ -139,20 +161,38 @@ This ensures fair comparison - some methods (e.g., AOFP, ThiNet) bake fine-tunin
 - Structural pruning physically removes channels, so parameter/FLOPs counts reflect actual compression
 
 ### Speed
-- **Inference Latency**: Wall-clock time per sample on fixed GPU
-  - Measured with warmup iterations and averaged over multiple runs
-  - Captures hardware efficiency, memory access patterns, etc.
-  - FLOPs ≠ actual speed due to hardware efficiency differences
-- **Speedup**: Ratio of baseline latency to pruned latency
+- **Inference Latency**: Wall-clock time per sample (pure inference, no training)
+  - **Measurement process** (`utils/metrics.py:measure_inference_latency()`):
+    1. **Warmup** (10 iterations): Runs inference without timing to stabilize device
+       - GPU: Initializes CUDA kernels, loads weights into GPU memory
+       - CPU: Warms up CPU cache, initializes operations
+       - First few runs are slower, so we exclude them from timing
+    2. **Timing** (50 iterations): Times each forward pass
+       - Creates dummy input tensor (batch_size=1, 224×224×3)
+       - Records wall-clock time: `start_time` → `model(dummy_input)` → `end_time`
+       - GPU: Synchronizes CUDA before/after each run (ensures accurate timing)
+       - CPU: Uses standard Python timing (no synchronization needed)
+    3. **Average**: Sums all 50 timings, divides by 50, then by batch_size
+       - Result: milliseconds per sample
+  - **What's measured**: Pure forward pass only (no data loading, no training, no backward pass, no epochs)
+- **Baseline vs Pruned**: Both measured identically after training/fine-tuning completes
+    - Baseline: Measured after baseline training (50 epochs) completes
+    - Pruned: Measured after pruning + fine-tuning (25 epochs) completes
+- **Speedup**: Ratio of baseline latency to pruned latency (e.g., 2.0× means pruned model is 2× faster)
 
 ### Fine-Tuning Cost
 - **Epochs to recover**: Number of epochs needed to recover baseline accuracy after pruning
-- Directly relevant for comparing lightweight local methods vs expensive global ones (e.g., NISP, DCP)
-- Tracks accuracy recovery during fine-tuning to measure computational cost
-- Saved as `fine_tune_curve.csv` for detailed analysis
+  - **Recovery definition**: Accuracy within 0.1% of baseline (e.g., baseline 85.0% → recovered if ≥84.9%)
+  - **Tracking**: After each fine-tuning epoch, checks if `current_accuracy >= (baseline_accuracy - 0.001)`
+  - **If recovered**: Records the epoch number (e.g., "recovered after 12 epochs")
+  - **If NOT recovered**: Returns `None` (accuracy never reached baseline level within 25 epochs)
+    - This is common - aggressive pruning may permanently reduce accuracy
+    - Final accuracy is still saved (e.g., "final: 82.5%, baseline: 85.0%")
+- **Accuracy curve**: Saved as `fine_tune_curve.csv` showing accuracy after each epoch
+  - Useful for analyzing recovery dynamics and comparing methods
 
 ### Data Loading
 
-- **Full experiments**: `num_workers=4` for parallel data loading (faster)
-- **Quick test**: `num_workers=0` for simplicity and debugging
+- **Full experiments**: Auto-detects OS - uses `num_workers=0` on macOS (multiprocessing compatibility), `num_workers=4` on Linux (faster parallel loading)
+- **Quick test**: Always uses `num_workers=0` for simplicity and debugging
 - Calibration data loader passed to pruning methods to avoid redundant data loading
