@@ -99,39 +99,53 @@ def _run_impl(log_path):
     print(f"  Test:  {len(test_loader)} batches")
 
     baseline_dir = os.path.join(RESULTS_DIR, "baseline")
+    baseline_model_path = os.path.join(baseline_dir, "model.pth")
+    baseline_metrics_path = os.path.join(baseline_dir, "metrics.json")
     os.makedirs(baseline_dir, exist_ok=True)
 
     print("\n[2/4] PHASE 1 — Baseline model")
-    print("  Loading VGG-16 (ImageNet pretrained, 10 classes)...")
-    model = vgg16(num_classes=10, pretrained=True).to(DEVICE)
-    print(f"  Training baseline for {BASELINE_TRAIN_EPOCHS} epoch(s)...")
-    train(model, train_loader, epochs=BASELINE_TRAIN_EPOCHS, fine_tune=True, verbose=True)
-    print("  Baseline training done.")
+    if os.path.exists(baseline_model_path) and os.path.exists(baseline_metrics_path):
+        print("  Baseline already exists; loading metrics from disk (skip training).")
+        with open(baseline_metrics_path) as f:
+            baseline_metrics = json.load(f)
+        baseline_acc = baseline_metrics["accuracy"]
+        baseline_params = baseline_metrics["parameters"]
+        baseline_flops = baseline_metrics["flops"]
+        baseline_latency_ms = baseline_metrics["inference_latency_ms"]
+        baseline_params_m = baseline_params / 1e6
+        baseline_flops_m = baseline_flops / 1e6
+        print(f"  Loaded: acc={100*baseline_acc:.2f}%  params={baseline_params/1e6:.2f}M  FLOPs={baseline_flops/1e6:.0f}M  latency={baseline_latency_ms:.3f}ms")
+    else:
+        print("  Loading VGG-16 (ImageNet pretrained, 10 classes)...")
+        model = vgg16(num_classes=10, pretrained=True).to(DEVICE)
+        print(f"  Training baseline for {BASELINE_TRAIN_EPOCHS} epoch(s)...")
+        train(model, train_loader, epochs=BASELINE_TRAIN_EPOCHS, fine_tune=True, verbose=True)
+        print("  Baseline training done.")
 
-    print("  Evaluating baseline on test set...")
-    baseline_acc = evaluate_accuracy(model, test_loader)
-    baseline_params = count_parameters(model)
-    # Save state_dict before compute_flops — thop.profile() adds total_ops/total_params to the model
-    print("  Saving baseline model...")
-    torch.save(model.state_dict(), os.path.join(baseline_dir, "model.pth"))
-    baseline_flops = compute_flops(model)
-    print(f"  Baseline results: acc={100*baseline_acc:.2f}%  params={baseline_params/1e6:.2f}M  FLOPs={baseline_flops/1e6:.0f}M")
-    print("  Measuring baseline inference latency...")
-    baseline_latency_ms = measure_inference_latency(model, batch_size=1)
-    print(f"  Baseline inference latency: {baseline_latency_ms:.3f} ms per sample")
+        print("  Evaluating baseline on test set...")
+        baseline_acc = evaluate_accuracy(model, test_loader)
+        baseline_params = count_parameters(model)
+        # Save state_dict before compute_flops — thop.profile() adds total_ops/total_params to the model
+        print("  Saving baseline model...")
+        torch.save(model.state_dict(), baseline_model_path)
+        baseline_flops = compute_flops(model)
+        print(f"  Baseline results: acc={100*baseline_acc:.2f}%  params={baseline_params/1e6:.2f}M  FLOPs={baseline_flops/1e6:.0f}M")
+        print("  Measuring baseline inference latency...")
+        baseline_latency_ms = measure_inference_latency(model, batch_size=1)
+        print(f"  Baseline inference latency: {baseline_latency_ms:.3f} ms per sample")
 
-    print("  Saving baseline metrics...")
-    baseline_metrics = {
-        "accuracy": baseline_acc,
-        "parameters": baseline_params,
-        "flops": baseline_flops,
-        "inference_latency_ms": baseline_latency_ms
-    }
-    save_metrics(baseline_dir, baseline_metrics)
+        print("  Saving baseline metrics...")
+        baseline_metrics = {
+            "accuracy": baseline_acc,
+            "parameters": baseline_params,
+            "flops": baseline_flops,
+            "inference_latency_ms": baseline_latency_ms
+        }
+        save_metrics(baseline_dir, baseline_metrics)
 
-    # Convert baseline to millions for display
-    baseline_params_m = baseline_params / 1e6
-    baseline_flops_m = baseline_flops / 1e6
+        # Convert baseline to millions for display
+        baseline_params_m = baseline_params / 1e6
+        baseline_flops_m = baseline_flops / 1e6
 
     summary_rows = []
     total_experiments = sum(len(methods) * len(PRUNING_RATIOS) for _, methods in METHODS.items() if methods)
@@ -150,7 +164,21 @@ def _run_impl(log_path):
                 exp_dir = os.path.join(
                     RESULTS_DIR, method, f"ratio_{ratio}"
                 )
+                exp_metrics_path = os.path.join(exp_dir, "metrics.json")
                 os.makedirs(exp_dir, exist_ok=True)
+
+                if os.path.exists(exp_metrics_path):
+                    print("  Experiment already has results; loading metrics and skipping.")
+                    with open(exp_metrics_path) as f:
+                        metrics = json.load(f)
+                    summary_rows.append(metrics)
+                    if summary_rows:
+                        with open(os.path.join(RESULTS_DIR, "summary.csv"), "w", newline="") as f:
+                            writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
+                            writer.writeheader()
+                            writer.writerows(summary_rows)
+                    print(f"  Skipped {n}/{total_experiments} (summary.csv updated)")
+                    continue
 
                 # Re-seed for reproducibility (each experiment should start from same random state)
                 set_seed(SEED)
