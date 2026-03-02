@@ -143,6 +143,33 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
     - One-shot structural pruning (original repo uses iterative soft-masking); fine-tuning is external
     - Reuses APoZ structural pruning helpers for consistent channel removal
 
+- **`nisp.py`** – NISP (Neuron Importance Score Propagation)
+  - **Paper**: Yu et al. (2018) "NISP: Pruning Networks using Neuron Importance Score Propagation"
+  - **Method**: Propagates neuron importance backward from the Final Response Layer (FRL) toward earlier layers
+  - **Scoring**:
+    1. Identify FRL (second-to-last Linear layer) and collect its activations from calibration data
+    2. Rank FRL neurons via variance × mean-absolute activation
+    3. Propagate importance backward: s_k = |W^(k+1)|^T s_{k+1} through Linear and Conv2d layers
+  - **Pruning**: Filters with lowest propagated importance scores are pruned first
+  - **Implementation details**:
+    - Global pruning method by design (default `scope="global"` in configs)
+    - Handles Conv2d→Linear transitions by reshaping Linear weights into per-channel importance
+    - Reuses APoZ structural pruning helpers for consistent channel removal
+
+- **`thinet.py`** – ThiNet (filter-level next-layer-aware pruning)
+  - **Paper**: Luo, Wu & Lin (2017) "ThiNet: A Filter Level Pruning Method for Deep Neural Network Compression" (ICCV 2017)
+  - **Method**: Prunes filters in layer i based on their contribution to layer i+2 (via layer i+1)
+  - **Scoring**:
+    1. For each consecutive Conv2d pair (i, i+1), sample (x̂, ŷ) from the relationship between input channels to layer i+1 and its outputs
+    2. Use a greedy algorithm to find channels whose removal minimally increases reconstruction error
+    3. Apply least-squares rescaling to adjust remaining channels in the next conv
+  - **Pruning**: Filters with lowest contribution (per ThiNet objective) are pruned first
+  - **Implementation details**:
+    - Global/sequential method: earlier layers’ pruning affects later statistics
+    - Uses incremental greedy selection for efficiency and least-squares rescaling
+    - Falls back to weight magnitude for the last conv and hidden Linear layers
+    - Reuses APoZ structural pruning helpers for consistent channel removal
+
 ## Results Structure
 
 Results are organized hierarchically by method and pruning ratio:

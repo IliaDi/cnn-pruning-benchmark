@@ -127,6 +127,36 @@ def apply_pruning_method(
         )
         
         return model
+    elif method == "NISP":
+        from utils.nisp import apply_nisp_pruning
+        
+        # Apply NISP pruning (global by default)
+        device = next(model.parameters()).device
+        model = apply_nisp_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope=scope,
+            device=device,
+            limit_batches=limit_batches
+        )
+        
+        return model
+    elif method == "ThiNet":
+        from utils.thinet import apply_thinet_pruning
+        
+        # Apply ThiNet pruning (global / sequential)
+        device = next(model.parameters()).device
+        model = apply_thinet_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope=scope,
+            device=device,
+            limit_batches=limit_batches
+        )
+        
+        return model
     else:
         # TODO: Implement other pruning methods
         # For now, return model unchanged

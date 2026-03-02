@@ -8,8 +8,8 @@ METHODS = {
         "CHIP",
     ],
     "global": [
-        # "NISP",      # TODO: not yet implemented
-        # "ThiNet",    # TODO: not yet implemented
+        "NISP",
+        "ThiNet",
         # "AOFP",      # TODO: not yet implemented
         # "GFS",       # TODO: not yet implemented
         # "DCP",       # TODO: not yet implemented
