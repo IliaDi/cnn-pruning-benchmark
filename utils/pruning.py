@@ -157,6 +157,36 @@ def apply_pruning_method(
         )
         
         return model
+    elif method == "GFS":
+        from utils.gfs import apply_gfs_pruning
+        
+        # Apply GFS pruning (global greedy forward selection)
+        device = next(model.parameters()).device
+        model = apply_gfs_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope=scope,
+            device=device,
+            limit_batches=limit_batches
+        )
+        
+        return model
+    elif method == "AOFP":
+        from utils.aofp import apply_aofp_pruning
+        
+        # Apply AOFP pruning (Damage Isolation)
+        device = next(model.parameters()).device
+        model = apply_aofp_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope=scope,
+            device=device,
+            limit_batches=limit_batches,
+        )
+        
+        return model
     else:
         # TODO: Implement other pruning methods
         # For now, return model unchanged

@@ -1,38 +1,17 @@
 """
-thinet.py  –  ThiNet pruning for VGG-16 / CIFAR-10 benchmark
+thinet.py – ThiNet pruning for VGG-16 / CIFAR-10.
 
-Luo, Wu & Lin (2017). "ThiNet: A Filter Level Pruning Method for Deep
-Neural Network Compression."  ICCV 2017.  arXiv:1707.06342v1
+Luo, Wu & Lin (2017), "ThiNet: A Filter Level Pruning Method for Deep
+Neural Network Compression" (ICCV 2017).
 
-Method summary
---------------
-ThiNet is a global pruning method that determines which filters to prune
-in layer i by analyzing their contribution to layer i+2 (the output of
-layer i+1). This is the key insight: prune based on next-layer statistics,
-not current-layer statistics.
-
-For each layer i:
-  1. Sample (x_hat, y_hat) pairs from the relationship between layer i+1's
-     input channels and layer i+2's output values (paper Eq. 1-3).
-  2. Find the subset T of channels to remove that minimizes:
-         sum_m ( sum_{j in T} x_hat_{m,j} )^2    (paper Eq. 6)
-     using a greedy algorithm.
-  3. After channel selection, apply least-squares weighting to minimize
-     reconstruction error (paper Eq. 7).
-  4. Prune the corresponding filters in layer i.
-
-For our benchmark, we adapt the method as follows:
-  - We apply a uniform target_ratio across all conv layers.
-  - Channel selection uses a greedy algorithm with incremental updates.
-  - A least-squares rescaling step is applied to next-layer filters.
-  - Global scope: layers are pruned sequentially (each layer's pruning
-    affects the next layer's statistics), matching the paper's protocol.
-  - No internal fine-tuning — handled externally by the standard protocol.
-
-Integration notes
------------------
-* Structural weight surgery reuses shared helpers from utils.apoz.
-* Fine-tuning NOT performed here — handled by training.fine_tune_post_pruning().
+This implementation:
+- For each consecutive Conv2d pair (i, i+1), samples per-channel
+  contributions and uses a greedy objective (ThiNet Eq. 6) plus a
+  least-squares rescaling step (Eq. 7).
+- Applies a uniform target_ratio across conv layers; falls back to
+  weight magnitude for the last convs and hidden linear layers.
+- Runs as a **global / sequential** pruning method and uses the shared
+  structural helpers from `utils.apoz`. Fine-tuning is done externally.
 """
 
 from __future__ import annotations

@@ -1,28 +1,17 @@
 """
-nisp.py  –  NISP (Neuron Importance Score Propagation) pruning for VGG-16 / CIFAR-10 benchmark
+nisp.py – NISP (Neuron Importance Score Propagation) pruning.
 
-Yu et al. (2018). "NISP: Pruning Networks using Neuron Importance Score
-Propagation."  arXiv:1711.05908v3
+Yu et al. (2018), "NISP: Pruning Networks using Neuron Importance Score
+Propagation".
 
-Method summary
---------------
-NISP is a global pruning method that measures neuron importance by
-propagating scores backward from the Final Response Layer (FRL) — the
-second-to-last layer before classification.
-
-Algorithm
----------
-1. Collect activations of the Final Response Layer (FRL).
-2. Compute importance of FRL neurons via feature ranking
-   (variance × mean-abs as surrogate for feature selection).
-3. Propagate importance backward: s_k = |W^(k+1)|^T s_{k+1}.
-4. Prune filters with lowest propagated importance scores.
-
-Integration notes
------------------
-* Structural weight surgery reuses shared helpers from utils.apoz.
-* Fine-tuning is NOT performed here — handled externally by
-  training.fine_tune_post_pruning() under the standardised protocol.
+This implementation:
+- Identifies the **Final Response Layer (FRL)**, ranks its neurons by a
+  simple variance × mean-|activation| criterion, then propagates
+  importance backward through Linear/Conv2d layers.
+- Uses the propagated scores to build global/local keep-masks for conv
+  and hidden linear layers.
+- Applies **structural** pruning using helpers from `utils.apoz`; all
+  fine-tuning is done externally by the shared training code.
 """
 
 from __future__ import annotations

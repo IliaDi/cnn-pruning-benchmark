@@ -1,59 +1,16 @@
 """
-lrmf.py  –  LRMF filter pruning for the VGG-16 / CIFAR-10 benchmark
+lrmf.py – LRMF pruning for VGG-16 / CIFAR-10.
 
-Reference
----------
-Zhang et al. (2023). "Filter Pruning via Learned Representation Median in
-the Frequency Domain." IEEE Transactions on Cybernetics, Vol. 53, No. 5.
-DOI: 10.1109/TCYB.2021.3124284
-GitHub: https://github.com/zhangxin-xd/LRMF
+Zhang et al. (2023), "Filter Pruning via Learned Representation Median in
+the Frequency Domain" (IEEE Trans. Cybernetics).
 
-Core idea
----------
-LRMF scores each output channel of a Conv2d layer by how *dissimilar* its
-feature map is from all others in the same layer, measured after mapping the
-representations into the frequency domain via DCT.
-
-  1. For each channel k in layer l, compute the 2-D DCT of the output
-     feature map M^l_k.                                          [Eq. 5]
-  2. Crop to the top-left quarter (low-frequency region only):
-         T^s(M^l_k) = T(M^l_k)[:ceil(side/4), :ceil(side/4)]   [Sec. III-C]
-  3. Build the C×C pairwise Euclidean distance matrix D:
-         d_{ij} = ||T^s(M^l_i) − T^s(M^l_j)||_2                [Eq. 8]
-  4. Row-sum each channel:
-         d_i = Σ_j d_{ij}                                       [Eq. 8]
-  5. Channels with the *smallest* d_i are the "representation medians" —
-     most replaceable by neighbours → prune.
-     Channels with the *largest*  d_i carry unique information   → keep.
-         s_i = 0  if i ∈ argsort(d_i)[:α·C]                    [Eq. 9]
-  6. Scores are accumulated and averaged across all calibration images.
-
-Adaptation for this project's benchmarking protocol
-----------------------------------------------------
-The original LRMF repo (pruning_cifar10.py) uses iterative soft-masking:
-it zeroes filter weights every `epoch_prune` epochs during training, with
-the gradient also masked at every step.  This bakes fine-tuning deep into
-the pruning loop.
-
-For fair comparison across all 12 methods we use one-shot STRUCTURAL
-pruning (physical channel removal) + the standardised external fine-tuning
-protocol (identical for all methods).  We therefore:
-  • Compute LRMF scores identically to the repo (same DCT, same quarter-
-    crop, same pairwise Euclidean distance, same per-image averaging).
-  • Apply structural weight surgery via the shared helpers from utils.apoz,
-    exactly as APoZ, DropNet, HRank and CHIP do.
-  • Return the pruned model with no fine-tuning applied.
-
-This ensures the importance criterion is faithfully reproduced while the
-fine-tuning advantage of the original iterative scheme is neutralised,
-enabling a fair controlled comparison.
-
-Thesis note
------------
-Paper results for VGG-16 on CIFAR-10 use non-uniform per-layer ratios
-(supplementary Sec. 7).  Our uniform target_ratio will produce slightly
-different compression numbers — this is correct and expected under the
-standardised benchmarking protocol.
+This implementation:
+- Scores channels by **DCT-distance** to other channels (representation
+  median idea; channels most similar to others are pruned first).
+- Uses 2-D DCT + low-frequency crop and pairwise distances to compute
+  per-channel importance.
+- Performs one-shot **structural** pruning via shared helpers in
+  `utils.apoz`; fine-tuning is handled externally.
 """
 
 from __future__ import annotations

@@ -10,8 +10,8 @@ METHODS = {
     "global": [
         "NISP",
         "ThiNet",
-        # "AOFP",      # TODO: not yet implemented
-        # "GFS",       # TODO: not yet implemented
+        "GFS",
+        "AOFP",
         # "DCP",       # TODO: not yet implemented
         # "REPrune",   # TODO: not yet implemented
     ]

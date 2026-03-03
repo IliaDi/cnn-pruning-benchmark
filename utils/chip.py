@@ -1,66 +1,17 @@
 """
-chip.py  –  CHIP filter pruning for VGG-16 / CIFAR-10 benchmark
+chip.py – CHIP pruning for VGG-16 / CIFAR-10.
 
-Sui et al. (2021). "CHIP: CHannel Independence-based Pruning for Compact
-Neural Networks."  NeurIPS 2021.  arXiv:2110.13981
+Sui et al. (2021), "CHIP: CHannel Independence-based Pruning for Compact
+Neural Networks" (NeurIPS 2021).
 
-Method summary
---------------
-CHIP scores each filter by the *channel independence* (CI) of the feature
-map it produces — an inter-channel metric that measures how linearly
-dependent one channel's feature map is on all other channels in the same
-layer.
-
-Given the full set of feature maps for layer l, matricized into
-    A^l  ∈  R^{C × hw}     (C channels, each flattened to hw)
-
-the CI score for channel i is:
-
-    CI(A^l_i)  =  ||A^l||_*  −  ||M^l_i ⊙ A^l||_*           (Eq. 3)
-
-where  ||·||_*  is the nuclear norm (ℓ1-norm of singular values),
-M^l_i  is a row-mask that zeros out row i.
-
-Intuitively:
-  - High CI  →  removing channel i causes a large nuclear-norm drop
-              →  channel carries unique information  →  KEEP
-  - Low CI   →  channel is nearly linearly dependent on others
-              →  its information is encoded elsewhere  →  PRUNE
-
-Key properties (paper Sec. 3, Q3 & Q4):
-  • CI is stable across input batches (Pearson r > 0.85 across batches).
-  • One-shot calculation is sufficient; further mask adjustment does not help.
-
-Performance adaptation for 224×224 inputs
-------------------------------------------
-The original paper evaluates on CIFAR-10 at native 32×32 resolution, where
-early VGG-16 layers produce feature maps of shape (64, 32, 32) →
-A ∈ R^{64 × 1024}.  SVD on a 64×1024 matrix is fast (~1 ms).
-
-Our pipeline resizes CIFAR-10 to 224×224 for ImageNet-pretrained VGG-16.
-The SAME first conv layer produces (64, 224, 224) → A ∈ R^{64 × 50176}.
-Running (C+1) = 65 SVD calls on a 64×50176 matrix PER IMAGE causes the
-scoring to appear completely frozen — wall-clock time is hours, not seconds.
-
-Fix: spatially pool each feature map to _POOL_SIZE × _POOL_SIZE (default
-8×8 = 64 elements) before computing nuclear norms.  This is principled:
-
-  1. The nuclear norm measures linear dependence BETWEEN channels, not
-     within-channel spatial structure.  Average pooling preserves inter-
-     channel relationships while discarding spatial redundancy.
-  2. The paper's 32×32 CIFAR-10 setup already produces 8×8 maps at the
-     third conv layer — our pool target matches the paper's implicit scale.
-  3. Reducing hw from 50176 → 64 makes each SVD call operate on a
-     (C × 64) matrix, cutting time per image from ~seconds to ~milliseconds.
-
-This adaptation is faithful to the paper's CI criterion; only the spatial
-resolution at which it is evaluated is adjusted for our input size.
-
-Integration notes
------------------
-* Structural weight surgery reuses the shared helpers from utils.apoz.
-* Fine-tuning is NOT performed here — handled externally by
-  training.fine_tune_post_pruning() under the standardised protocol.
+This implementation:
+- Scores channels by **channel independence** (nuclear-norm drop when a
+  channel is masked out).
+- Pools feature maps to `_POOL_SIZE×_POOL_SIZE` before SVD for efficiency
+  on 224×224 inputs.
+- Supports local/global ranking and performs **structural** pruning using
+  the shared helpers from `utils.apoz`.
+Fine-tuning is handled externally by the standard training protocol.
 """
 
 from __future__ import annotations

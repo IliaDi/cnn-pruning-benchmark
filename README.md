@@ -170,6 +170,32 @@ Master's thesis codebase for benchmarking activation-based pruning methods on CN
     - Falls back to weight magnitude for the last conv and hidden Linear layers
     - Reuses APoZ structural pruning helpers for consistent channel removal
 
+- **`gfs.py`** – GFS (Greedy Forward Selection)
+  - **Paper**: Ye et al. (2020) "Good Subnetworks Provably Exist: Pruning via Greedy Forward Selection" (ICML 2020)
+  - **Method**: Greedy forward-selection style pruning that scores filters by how well each alone maintains the loss
+  - **Scoring**:
+    1. For each Conv2d layer, temporarily activate a single filter k (all others zeroed)
+    2. Measure the loss with only filter k active
+    3. Importance = negative loss; higher importance = better single-filter performance
+  - **Pruning**: Filters with lowest importance are pruned (global or per-layer threshold)
+  - **Implementation details**:
+    - Approximates the paper’s forward-selection criterion with single-filter loss evaluations for tractability on VGG-16
+    - Uses global or per-layer ranking via `scope`
+    - Linear layers use weight-magnitude fallback
+    - Reuses APoZ structural pruning helpers for consistent channel removal
+
+- **`aofp.py`** – AOFP (Approximated Oracle Filter Pruning)
+  - **Paper**: Ding et al. (2019) "Approximated Oracle Filter Pruning for Destructive CNN Width Optimization" (ICML 2019)
+  - **Method**: Scores filters by Damage Isolation – how much the next layer’s output changes when a filter is ablated
+  - **Scoring**:
+    1. For each Conv2d layer, randomly ablate half of its filters and measure normalised deviation in the next Conv2d’s output
+    2. Repeat for multiple ablation rounds; average the damage per filter
+  - **Pruning**: Filters with lowest damage scores are pruned (global or per-layer threshold)
+  - **Implementation details**:
+    - Global or local ranking supported via `scope`
+    - Layers without a next Conv2d (last conv, FC) use weight-magnitude fallback
+    - Structural pruning reuses APoZ helpers; fine-tuning is external
+
 ## Results Structure
 
 Results are organized hierarchically by method and pruning ratio:
