@@ -216,7 +216,7 @@ def compute_threshold(
     Returns:
         Scalar threshold T; channels with APoZ > T are pruned.
     """
-    percentile = 1.0 - target_ratio   # e.g. target_ratio=0.3 → 70th percentile
+    percentile = 1.0 - target_ratio   
     return torch.quantile(apoz, percentile).item()
 
 
