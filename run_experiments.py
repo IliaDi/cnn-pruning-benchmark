@@ -90,13 +90,12 @@ def _run_impl(log_path):
     print("=" * 60)
 
     print("\n[1/4] Building data loaders...")
-    # Use num_workers=0 on macOS for compatibility (multiprocessing issues)
-    # On Linux, can use num_workers=4+ for faster data loading
     import platform
     num_workers = 0 if platform.system() == "Darwin" else 4
-    train_loader, test_loader = get_cifar10_loaders(use_augmentation=True, num_workers=num_workers)
-    print(f"  Train: {len(train_loader)} batches")
+    train_loader, test_loader, calib_loader = get_cifar10_loaders(use_augmentation=True, num_workers=num_workers)
+    print(f"  Train: {len(train_loader)} batches (40k, held out from calib)")
     print(f"  Test:  {len(test_loader)} batches")
+    print(f"  Calib: {len(calib_loader)} batches (10k held-out, 1k per class)")
 
     baseline_dir = os.path.join(RESULTS_DIR, "baseline")
     baseline_model_path = os.path.join(baseline_dir, "model.pth")
@@ -200,14 +199,13 @@ def _run_impl(log_path):
                 pre_pruning_layer_info = get_layer_info(model)
 
                 print(f"  Applying {method} pruning (scope={scope}, ratio={ratio})...")
-                # Apply structural pruning (must physically remove filters, not just mask them)
-                # Use test_loader for calibration (no augmentation, consistent with evaluation)
+                # Calibration uses held-out set (10k); test set used only for final evaluation.
                 apply_pruning_method(
                     model=model,
                     method=method,
                     scope=scope,
                     target_ratio=ratio,
-                    calib_loader=test_loader
+                    calib_loader=calib_loader
                 )
                 print("  Pruning applied.")
 

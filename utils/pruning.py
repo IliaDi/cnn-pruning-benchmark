@@ -35,9 +35,7 @@ def apply_pruning_method(
     # Use provided calibration loader, or create one if not provided
     if calib_loader is None:
         from utils.data import get_cifar10_loaders
-        # Get a calibration dataloader for pruning computation
-        # Use test loader (no augmentation) for consistent scores
-        _, calib_loader = get_cifar10_loaders(batch_size=BATCH_SIZE, use_augmentation=False)
+        _, _, calib_loader = get_cifar10_loaders(batch_size=BATCH_SIZE, use_augmentation=False)
     
     if method == "ApoZ":
         from utils.apoz import apply_apoz_pruning
