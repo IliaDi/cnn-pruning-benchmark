@@ -5,7 +5,7 @@ Master's thesis codebase for benchmarking activation-based pruning methods on VG
 ## Quick Start
 
 - **Full experiments:** `python run_experiments.py`  
-  Uses `config.py` (50 baseline epochs, 10 fine-tune epochs, batch size 128, ratios [0.3, 0.5, 0.7]). Results in `results/`. Skips baseline if `results/baseline/model.pth` and `metrics.json` exist; skips each (method, ratio) if that run’s `metrics.json` exists.
+  Uses `config.py` (30 baseline epochs, 10 fine-tune epochs, batch size 128, ratios [0.3, 0.5, 0.7]). Results in `results/`. Skips baseline if `results/baseline/model.pth` and `metrics.json` exist; skips each (method, ratio) if that run’s `metrics.json` exists.
 
 ## Configuration
 
