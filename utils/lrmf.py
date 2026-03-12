@@ -136,84 +136,113 @@ def compute_lrmf_scores(
     scores : dict[conv_layer_name  →  Tensor(C_out,)]
     """
     model.eval()
-
-    # ── Register hooks on every Conv2d ────────────────────────────────────────
-    layer_outputs: Dict[str, List[np.ndarray]] = {}
-    handles: List = []
-
+    # ── Discover Conv2d layers and their metadata ─────────────────────────────
+    conv_names: List[str] = []
     for name, module in model.named_modules():
         if isinstance(module, nn.Conv2d):
-            layer_outputs[name] = []
+            conv_names.append(name)
 
-            def _make_hook(lname: str):
-                def _hook(mod, inp, out):
-                    layer_outputs[lname].append(out.detach().cpu().numpy())
-                return _hook
+    # Accumulators: distance sums per layer, populated incrementally.
+    distance_accum: Dict[str, np.ndarray] = {}   # layer → (C,) float64
+    layer_meta: Dict[str, dict] = {}             # layer → {C, H, W, crop_a}
+    num_batches = 0
 
-            handles.append(module.register_forward_hook(_make_hook(name)))
+    # ── Per-batch: hook → forward → score → discard ──────────────────────────
+    # We store only the current batch's feature maps, then clear them after
+    # scoring. Peak memory ≈ 1 batch × all layers.
+    current_batch_outputs: Dict[str, np.ndarray] = {}
+    handles: List = []
+
+    for cname in conv_names:
+        def _make_hook(lname: str):
+            def _hook(mod, inp, out):
+                current_batch_outputs[lname] = out.detach().cpu().numpy()
+            return _hook
+
+        module = dict(model.named_modules())[cname]
+        handles.append(module.register_forward_hook(_make_hook(cname)))
 
     try:
         with torch.no_grad():
             for batch_idx, (images, _) in enumerate(dataloader):
                 if limit_batches is not None and batch_idx >= limit_batches:
                     break
+
+                current_batch_outputs.clear()
                 model(images.to(device))
+                num_batches += 1
+
+                for lname in conv_names:
+                    if lname not in current_batch_outputs:
+                        continue
+
+                    batch_arr = current_batch_outputs[lname]   # (B, C, H, W)
+                    B, C, H, W = batch_arr.shape
+
+                    if lname not in distance_accum:
+                        if H < 2 or W < 2:
+                            layer_meta[lname] = {
+                                "C": C, "H": H, "W": W,
+                                "crop_a": 0, "skip": True,
+                            }
+                        else:
+                            side   = max(H, W)
+                            crop_a = math.ceil(side / 4)
+                            layer_meta[lname] = {
+                                "C": C, "H": H, "W": W,
+                                "crop_a": crop_a, "skip": False,
+                            }
+                        distance_accum[lname] = np.zeros(C, dtype=np.float64)
+
+                    meta = layer_meta[lname]
+                    if meta["skip"]:
+                        continue
+
+                    crop_a = meta["crop_a"]
+                    batch_dist_sum = np.zeros(C, dtype=np.float64)
+
+                    for b in range(B):
+                        fd_np = _compute_dct_descriptors(batch_arr[b], crop_a)
+
+                        try:
+                            from scipy.spatial.distance import cdist
+                            dist_mat = cdist(fd_np, fd_np, metric="euclidean")
+                        except ImportError:
+                            diff     = fd_np[:, None, :] - fd_np[None, :, :]
+                            dist_mat = np.sqrt((diff * diff).sum(-1))
+
+                        batch_dist_sum += dist_mat.sum(axis=1)
+
+                    distance_accum[lname] += batch_dist_sum
+
+                current_batch_outputs.clear()
+
     finally:
         for h in handles:
             h.remove()
 
-    # ── Compute per-layer LRMF scores ─────────────────────────────────────────
+    # ── Finalise scores ───────────────────────────────────────────────────────
     scores: Dict[str, torch.Tensor] = {}
 
-    for lname, batch_list in layer_outputs.items():
-        if not batch_list:
+    for lname in conv_names:
+        if lname not in layer_meta:
             continue
 
-        num_batches = len(batch_list)
-        C = batch_list[0].shape[1]
-        H = batch_list[0].shape[2]
-        W = batch_list[0].shape[3]
+        meta = layer_meta[lname]
+        C = meta["C"]
 
-        if H < 2 or W < 2:
-            # 1×1 spatial: DCT is trivial; assign uniform scores → no pruning bias
+        if meta["skip"]:
             scores[lname] = torch.ones(C, dtype=torch.float32)
             print(f"    [{lname}] 1×1 spatial → uniform LRMF scores (no pruning bias)")
             continue
 
-        side   = max(H, W)
-        crop_a = math.ceil(side / 4)             # a = ceil(w/4), matches repo
-
-        # Accumulate distance sums across all batches × images.
-        # Divided by num_batches at the end — matches repo lines 537-539.
-        distance_final = np.zeros(C, dtype=np.float64)
-
-        for batch_arr in batch_list:             # shape: (B, C, H, W)
-            B = batch_arr.shape[0]
-            batch_dist_sum = np.zeros(C, dtype=np.float64)
-
-            for b in range(B):
-                # fd_np: (C, crop_a²) – DCT descriptors for one image
-                fd_np = _compute_dct_descriptors(batch_arr[b], crop_a)
-
-                # Pairwise Euclidean distance matrix D ∈ R^{C×C}  [Eq. 8]
-                try:
-                    from scipy.spatial.distance import cdist
-                    dist_mat = cdist(fd_np, fd_np, metric='euclidean')
-                except ImportError:
-                    diff     = fd_np[:, None, :] - fd_np[None, :, :]
-                    dist_mat = np.sqrt((diff * diff).sum(-1))
-
-                # Row-sum: d_i = Σ_j d_{ij}   [Eq. 8]
-                batch_dist_sum += dist_mat.sum(axis=1)
-
-            distance_final += batch_dist_sum
-
-        # Average over batches
-        distance_final /= num_batches
+        distance_final = distance_accum[lname]
+        if num_batches > 0:
+            distance_final /= num_batches
 
         scores[lname] = torch.from_numpy(distance_final.astype(np.float32))
         print(
-            f"    [{lname}] C={C}  crop={crop_a}×{crop_a}  "
+            f"    [{lname}] C={C}  crop={meta['crop_a']}×{meta['crop_a']}  "
             f"d_i in [{distance_final.min():.1f}, {distance_final.max():.1f}]"
         )
 
