@@ -99,18 +99,16 @@ def compute_hrank_scores(
     """
     Compute per-filter HRank importance scores for all Conv2d layers.
 
-    For each Conv2d layer i we hook the output *before* ReLU (i.e., directly
-    on the Conv2d forward output) to obtain the raw feature maps, then
-    compute their average rank across the calibration images:
+    For each Conv2d layer i we hook the output of the *following ReLU*
+    (post-activation feature maps) and compute their average rank across
+    the calibration images:
 
         score[j] = (1/g) * sum_{t=1}^{g}  Rank( feature_map[t, j, :, :] )
 
-    Hooking the Conv2d output (pre-ReLU) is consistent with the paper:
-    Lin et al. define feature maps as the output of the convolutional
-    operation  o^i_j = W^i_j * x^i  before any non-linearity.  The rank
-    calculation is on the 2-D spatial slice, so ReLU does not affect rank
-    in a systematic direction and the paper does not specify pre/post-ReLU.
-    Hooking the Conv directly is simpler and avoids BN/ReLU ordering issues.
+    Hooking post-ReLU is critical in practice: ReLU zeroes out negative
+    activations and makes the rank separation between redundant and
+    informative filters visible. Pre-ReLU feature maps are typically dense
+    and nearly full-rank, which can lead to degenerate/unstable scores.
 
     Parameters
     ----------
@@ -140,14 +138,11 @@ def compute_hrank_scores(
                 return
             B, C, H, W = output.shape
             if H < 2 or W < 2:
-                # Rank of a 1×1 "matrix" is always ≤ 1 — not informative
-                # Use a uniform score so 1×1 convs are skipped gracefully
-                if layer_name not in rank_accum:
-                    rank_accum[layer_name] = torch.ones(C, dtype=torch.float32)
-                    image_counts[layer_name] = 1
-                return
-
-            batch_ranks = _matrix_rank_batch(output.detach())  # (C,), cpu
+                # 1×1 feature maps give rank <= 1, not informative.
+                # Use uniform scores but still include them in averaging.
+                batch_ranks = torch.ones(C, dtype=torch.float32)
+            else:
+                batch_ranks = _matrix_rank_batch(output.detach())  # (C,), cpu
             if layer_name not in rank_accum:
                 rank_accum[layer_name] = batch_ranks
                 image_counts[layer_name] = B
@@ -156,10 +151,37 @@ def compute_hrank_scores(
                 image_counts[layer_name] += B
         return hook_fn
 
-    # Register forward hooks on all Conv2d layers (by name, for VGG-16)
-    for name, module in model.named_modules():
-        if isinstance(module, nn.Conv2d):
-            handles.append(module.register_forward_hook(make_hook(name)))
+    # Register forward hooks on the *ReLU following* each Conv2d (post-activation)
+    if hasattr(model, "features") and isinstance(model.features, nn.Sequential):
+        children = list(model.features.children())
+        for idx, child in enumerate(children):
+            if isinstance(child, nn.Conv2d):
+                # conv name in torchvision VGG is typically "features.{idx}"
+                conv_name = f"features.{idx}"
+
+                # find the next ReLU sibling within a few steps
+                target = child  # fallback
+                for j in range(idx + 1, min(idx + 4, len(children))):
+                    if isinstance(children[j], nn.ReLU):
+                        target = children[j]
+                        break
+
+                handles.append(target.register_forward_hook(make_hook(conv_name)))
+    else:
+        # Generic fallback (non-standard architectures): try to hook the
+        # next ReLU module after each Conv2d in the module traversal order.
+        named = list(model.named_modules())
+        for idx, (name, mod) in enumerate(named):
+            if isinstance(mod, nn.Conv2d):
+                target = mod
+                parent_prefix = ".".join(name.split(".")[:-1])
+                for j in range(idx + 1, min(idx + 4, len(named))):
+                    cname, cmod = named[j]
+                    cand_prefix = ".".join(cname.split(".")[:-1])
+                    if isinstance(cmod, nn.ReLU) and cand_prefix == parent_prefix:
+                        target = cmod
+                        break
+                handles.append(target.register_forward_hook(make_hook(name)))
 
     try:
         with torch.no_grad():
