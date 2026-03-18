@@ -5,9 +5,11 @@ Ye et al. (2020), "Good Subnetworks Provably Exist: Pruning via Greedy
 Forward Selection" (ICML 2020).
 
 This implementation:
-- Approximates greedy forward selection by scoring each Conv2d filter
-  via the loss when only that filter is active (single-filter forward
-  selection criterion).
+- Implements greedy forward selection by iteratively growing a set of
+  retained filters for each Conv2d layer; each step selects the candidate
+  filter whose inclusion yields the lowest loss on a calibration subset.
+  To keep runtime tractable for wide layers, candidate evaluation is
+  restricted to a random subset per greedy step.
 - Builds local/global masks from these importance scores; linear layers
   use a weight-magnitude fallback.
 - Applies **structural** pruning using helpers from `utils.apoz`; all
@@ -73,31 +75,33 @@ def _compute_loss(
     return float(loss.item())
 
 
-def _score_filters_by_loss_contribution(
+def _score_filters_by_greedy_forward_selection(
     model: nn.Module,
     layer_name: str,
     layer_module: nn.Conv2d,
     images: torch.Tensor,
     labels: torch.Tensor,
     device: torch.device,
+    n_keep: int,
     eval_batch_size: int = 256,
 ) -> torch.Tensor:
     """
-    Score each filter by its contribution to loss reduction.
+    Greedy forward selection scoring for one Conv2d layer.
 
-    Measures the loss when only filter k is active in the layer.
-    Lower loss = more important filter (it alone can better maintain
-    the network's predictions).
+    Builds a retained set S iteratively. At greedy step t, it considers
+    candidates k and picks the one with lowest loss when using
+    exactly S U {k} active output channels (scaled by |S| normalization).
 
-    Returns
-    -------
-    importance : (N_h,) tensor — higher values = more important.
+    Importance is the reverse selection order: filters picked earlier get
+    higher scores.
     """
     N_h = layer_module.out_channels
+    n_keep = max(1, min(int(n_keep), N_h))
 
-    orig_weight = layer_module.weight.data.clone()
-    orig_bias = layer_module.bias.data.clone() if layer_module.bias is not None else None
+    # Restrict evaluated candidates per greedy step for runtime.
+    num_evaluate = min(20, N_h)
 
+    # Random subset of images for tractable loss evaluation.
     if len(images) > eval_batch_size:
         perm = torch.randperm(len(images))[:eval_batch_size]
         eval_imgs = images[perm]
@@ -106,28 +110,57 @@ def _score_filters_by_loss_contribution(
         eval_imgs = images
         eval_lbls = labels
 
-    losses = torch.zeros(N_h, device=device)
+    orig_weight = layer_module.weight.data.clone()
+    orig_bias = layer_module.bias.data.clone() if layer_module.bias is not None else None
 
-    for k in range(N_h):
-        # Activate only filter k
-        zero_weight = torch.zeros_like(orig_weight)
-        zero_weight[k] = orig_weight[k]
+    importance = torch.zeros(N_h, dtype=torch.float32, device="cpu")
+    selected = torch.zeros(N_h, dtype=torch.bool, device="cpu")
 
-        layer_module.weight.data = zero_weight
-        if orig_bias is not None:
-            zero_bias = torch.zeros_like(orig_bias)
-            zero_bias[k] = orig_bias[k]
-            layer_module.bias.data = zero_bias
+    for step in range(n_keep):
+        remaining = torch.where(~selected)[0].tolist()
+        if not remaining:
+            break
 
-        losses[k] = _compute_loss(model, eval_imgs, eval_lbls)
+        selected_idxs = torch.where(selected)[0].tolist()
+        if len(remaining) > num_evaluate:
+            perm = torch.randperm(len(remaining))[:num_evaluate].tolist()
+            candidates = [remaining[i] for i in perm]
+        else:
+            candidates = remaining
+
+        best_k = None
+        best_loss = float("inf")
+
+        for k in candidates:
+            candidate = selected_idxs + [k]
+            scale = float(N_h) / float(len(candidate))
+
+            # Mask weights to keep only candidate output channels
+            layer_module.weight.data.zero_()
+            layer_module.weight.data[candidate] = orig_weight[candidate]
+            layer_module.weight.data.mul_(scale)
+
+            if orig_bias is not None:
+                layer_module.bias.data.zero_()
+                layer_module.bias.data[candidate] = orig_bias[candidate]
+                layer_module.bias.data.mul_(scale)
+
+            loss = _compute_loss(model, eval_imgs, eval_lbls)
+            if loss < best_loss:
+                best_loss = loss
+                best_k = k
+
+        if best_k is None:
+            break
+
+        selected[best_k] = True
+        importance[best_k] = float(n_keep - step)
 
     # Restore original weights
     layer_module.weight.data = orig_weight
     if orig_bias is not None:
         layer_module.bias.data = orig_bias
 
-    # Higher importance = lower loss (negate)
-    importance = -losses
     return importance.detach().cpu()
 
 
@@ -314,13 +347,17 @@ def apply_gfs_pruning(
     for name, module in prunable:
         if isinstance(module, nn.Conv2d):
             print(f"    [{name}] scoring {module.out_channels} conv filters...")
-            importance = _score_filters_by_loss_contribution(
+            # Greedy forward-selection grows a retained set S of size n_keep.
+            n_prune = int(target_ratio * module.out_channels)
+            n_keep = max(1, module.out_channels - n_prune)
+            importance = _score_filters_by_greedy_forward_selection(
                 model,
                 name,
                 module,
                 calib_images,
                 calib_labels,
                 device,
+                n_keep=n_keep,
                 eval_batch_size=256,
             )
             all_importance[name] = importance
@@ -338,7 +375,21 @@ def apply_gfs_pruning(
 
     # Step 4: build keep masks
     print(f"  GFS: building pruning masks (scope={scope}, target={target_ratio:.0%} removed)...")
-    masks = _build_masks_from_importance(all_importance, target_ratio, scope=scope)
+    if scope == "global":
+        # Global ranking mixes heterogeneous score sources (conv greedy-loss
+        # scores and linear weight-magnitude fallback). Normalize per-layer
+        # so each layer contributes comparably.
+        normalized: Dict[str, torch.Tensor] = {}
+        for name, s in all_importance.items():
+            s_min = s.min()
+            s_max = s.max()
+            if (s_max - s_min) > 1e-12:
+                normalized[name] = (s - s_min) / (s_max - s_min)
+            else:
+                normalized[name] = torch.ones_like(s)
+        masks = _build_masks_from_importance(normalized, target_ratio, scope=scope)
+    else:
+        masks = _build_masks_from_importance(all_importance, target_ratio, scope=scope)
 
     # Step 5: structural pruning
     print("  GFS: applying structural pruning...")
