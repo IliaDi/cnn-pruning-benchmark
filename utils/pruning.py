@@ -200,6 +200,21 @@ def apply_pruning_method(
         )
 
         return model
+    elif method == "REPrune":
+        from utils.reprune import apply_reprune_pruning
+
+        # Apply REPrune pruning (kernel representative selection)
+        device = next(model.parameters()).device
+        model = apply_reprune_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope=scope,
+            device=device,
+            limit_batches=limit_batches,
+        )
+
+        return model
     else:
         # TODO: Implement other pruning methods
         # For now, return model unchanged

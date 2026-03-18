@@ -12,8 +12,8 @@ METHODS = {
         "ThiNet",
         "AOFP",
         "GFS",
-        # "DCP",       # TODO: not yet implemented
-        # "REPrune",   # TODO: not yet implemented
+        "DCP", 
+        "REPrune",
     ]
 }
 
