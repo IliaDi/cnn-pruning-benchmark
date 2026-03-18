@@ -215,9 +215,26 @@ def _build_masks_global(
     scores: Dict[str, torch.Tensor],
     pruning_ratio: float,
 ) -> Dict[str, torch.Tensor]:
-    """Keep-masks using global ranking across all layers."""
-    layer_names = list(scores.keys())
-    all_scores = torch.cat([scores[n] for n in layer_names])
+    """
+    Keep-masks using global ranking across all layers.
+
+    Scores are normalized per-layer to [0, 1] before concatenating for the
+    global ranking, so that layers with different absolute score scales
+    (e.g., Conv channels vs. FC neurons) contribute comparably.
+    """
+    # ── Normalize each layer's scores to [0, 1] ─────────────────────────
+    normalized: Dict[str, torch.Tensor] = {}
+    for name, s in scores.items():
+        s_min = s.min()
+        s_max = s.max()
+        if (s_max - s_min) > 1e-12:
+            normalized[name] = (s - s_min) / (s_max - s_min)
+        else:
+            # All scores identical → uniform importance → don't bias this layer
+            normalized[name] = torch.ones_like(s)
+
+    layer_names = list(normalized.keys())
+    all_scores = torch.cat([normalized[n] for n in layer_names])
     n_total = len(all_scores)
     n_prune = max(1, int(pruning_ratio * n_total))
 
@@ -228,13 +245,14 @@ def _build_masks_global(
     masks: Dict[str, torch.Tensor] = {}
     offset = 0
     for name in layer_names:
-        s = scores[name]
+        s = normalized[name]
         n_out = len(s)
         keep = torch.tensor(
             [(offset + i) not in prune_set for i in range(n_out)],
             dtype=torch.bool,
         )
         if keep.sum() == 0:
+            # guard: always keep ≥ 1 (highest normalized score)
             keep[int(torch.argmax(s).item())] = True
         masks[name] = keep
         n_kept = keep.sum().item()
@@ -243,6 +261,7 @@ def _build_masks_global(
             f"pruned={n_out-n_kept}/{n_out} ({100*(n_out-n_kept)/n_out:.1f}%)"
         )
         offset += n_out
+
     return masks
 
 
