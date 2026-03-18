@@ -328,7 +328,21 @@ def apply_aofp_pruning(
 
     print(f"  AOFP: building masks (scope={scope}, target={target_ratio:.0%} removed)...")
     if scope == "global":
-        masks = _build_masks_global(all_scores, pruning_ratio=target_ratio)
+        # Global ranking mixes heterogeneous score sources (DI for conv,
+        # weight-magnitude fallback for layers without a next-conv pair).
+        # Without per-layer normalization, large-magnitude layers (e.g.
+        # classifier linears) dominate and convolutional layers get pruned
+        # incorrectly.
+        normalized: Dict[str, torch.Tensor] = {}
+        for name, s in all_scores.items():
+            s_min = s.min()
+            s_max = s.max()
+            if (s_max - s_min) > 1e-12:
+                normalized[name] = (s - s_min) / (s_max - s_min)
+            else:
+                normalized[name] = torch.ones_like(s)
+
+        masks = _build_masks_global(normalized, pruning_ratio=target_ratio)
     else:
         masks = _build_masks_local(all_scores, pruning_ratio=target_ratio)
 
