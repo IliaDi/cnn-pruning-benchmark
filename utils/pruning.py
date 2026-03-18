@@ -185,6 +185,21 @@ def apply_pruning_method(
         )
         
         return model
+    elif method == "DCP":
+        from utils.dcp import apply_dcp_pruning
+
+        # Apply DCP pruning (Discrimination-aware Channel Pruning)
+        device = next(model.parameters()).device
+        model = apply_dcp_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope=scope,
+            device=device,
+            limit_batches=limit_batches,
+        )
+
+        return model
     else:
         # TODO: Implement other pruning methods
         # For now, return model unchanged
