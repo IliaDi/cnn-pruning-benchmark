@@ -3,6 +3,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import json
 import csv
 import torch
+import torch.nn as nn
 import numpy as np
 from datetime import datetime
 
@@ -58,6 +59,124 @@ def save_metrics(path, metrics):
         writer = csv.DictWriter(f, fieldnames=metrics.keys())
         writer.writeheader()
         writer.writerow(metrics)
+
+
+def extract_pruning_mask(baseline_state, pruned_model):
+    """
+    Extract which conv output channels were kept vs removed by matching
+    pruned conv biases/weights back to the baseline snapshot.
+    """
+    layers = {}
+
+    for name, mod in pruned_model.named_modules():
+        if not isinstance(mod, nn.Conv2d):
+            continue
+
+        weight_key = f"{name}.weight"
+        bias_key = f"{name}.bias"
+        if weight_key not in baseline_state:
+            continue
+
+        n_orig = baseline_state[weight_key].shape[0]
+        n_pruned = mod.out_channels
+
+        if n_pruned >= n_orig:
+            kept = list(range(n_orig))
+        elif mod.bias is not None and bias_key in baseline_state:
+            bias_orig = baseline_state[bias_key]
+            bias_pruned = mod.bias.data.cpu()
+            kept = []
+            used = set()
+            for j in range(n_pruned):
+                diffs = (bias_orig - bias_pruned[j]).abs()
+                for u in used:
+                    diffs[u] = float("inf")
+                best = int(torch.argmin(diffs).item())
+                kept.append(best)
+                used.add(best)
+        else:
+            w_orig = baseline_state[weight_key].cpu().reshape(n_orig, -1)
+            w_pruned = mod.weight.data.cpu().reshape(n_pruned, -1)
+            norm_orig = w_orig.norm(dim=1)
+            norm_pruned = w_pruned.norm(dim=1)
+            kept = []
+            used = set()
+            for j in range(n_pruned):
+                diffs = (norm_orig - norm_pruned[j]).abs()
+                for u in used:
+                    diffs[u] = float("inf")
+                best = int(torch.argmin(diffs).item())
+                kept.append(best)
+                used.add(best)
+
+        removed = sorted(set(range(n_orig)) - set(kept))
+        layers[name] = {
+            "total_filters": n_orig,
+            "kept_indices": sorted(kept),
+            "removed_indices": removed,
+            "kept_count": len(kept),
+            "removed_count": len(removed),
+        }
+
+    return layers
+
+
+def save_pruning_mask(exp_dir, method, scope, ratio, mask_layers):
+    result = {
+        "method": method,
+        "scope": scope,
+        "target_pruning_ratio_removed": ratio,
+        "layers": mask_layers,
+    }
+    with open(os.path.join(exp_dir, "pruning_mask.json"), "w") as f:
+        json.dump(result, f, indent=2)
+
+
+def backfill_pruning_mask(
+    method,
+    scope,
+    ratio,
+    exp_dir,
+    baseline_model_path,
+    calib_loader,
+    baseline_dir,
+):
+    """
+    Backfill pruning_mask.json for an already-completed experiment.
+    Re-runs pruning only (no fine-tuning), deterministic given SEED.
+    """
+    print("  Backfilling pruning_mask.json (pruning only)...")
+    set_seed(SEED)
+
+    model = vgg16(num_classes=10, pretrained=False).to(DEVICE)
+    ckpt = torch.load(baseline_model_path, map_location=DEVICE)
+    model_keys = set(model.state_dict().keys())
+    ckpt_filtered = {k: v for k, v in ckpt.items() if k in model_keys}
+    if len(ckpt_filtered) < len(ckpt):
+        extra = set(ckpt.keys()) - model_keys
+        print(f"  (Dropping non-model keys: {extra})")
+    model.load_state_dict(ckpt_filtered, strict=True)
+
+    # Snapshot conv params only (used to recover kept indices).
+    baseline_state = {
+        k: v.cpu().clone()
+        for k, v in model.state_dict().items()
+        if k.startswith("features.") and (k.endswith(".weight") or k.endswith(".bias"))
+    }
+
+    apply_pruning_method(
+        model=model,
+        method=method,
+        scope=scope,
+        target_ratio=ratio,
+        calib_loader=calib_loader,
+    )
+
+    mask_layers = extract_pruning_mask(baseline_state, model)
+    save_pruning_mask(exp_dir, method, scope, ratio, mask_layers)
+    print(f"  Backfilled pruning_mask.json ({len(mask_layers)} layers)")
+
+    del model, baseline_state
 
 
 def run():
@@ -164,10 +283,14 @@ def _run_impl(log_path):
                     RESULTS_DIR, method, f"ratio_{ratio}"
                 )
                 exp_metrics_path = os.path.join(exp_dir, "metrics.json")
+                exp_mask_path = os.path.join(exp_dir, "pruning_mask.json")
                 os.makedirs(exp_dir, exist_ok=True)
 
                 if os.path.exists(exp_metrics_path):
-                    print("  Experiment already has results; loading metrics and skipping.")
+                    if os.path.exists(exp_mask_path):
+                        print("  Experiment complete (metrics + pruning_mask exist); skipping.")
+                    else:
+                        print("  Experiment has metrics but no pruning_mask; backfilling mask only...")
                     with open(exp_metrics_path) as f:
                         metrics = json.load(f)
                     summary_rows.append(metrics)
@@ -176,6 +299,16 @@ def _run_impl(log_path):
                             writer = csv.DictWriter(f, fieldnames=summary_rows[0].keys())
                             writer.writeheader()
                             writer.writerows(summary_rows)
+                    if not os.path.exists(exp_mask_path):
+                        backfill_pruning_mask(
+                            method=method,
+                            scope=scope,
+                            ratio=ratio,
+                            exp_dir=exp_dir,
+                            baseline_model_path=baseline_model_path,
+                            calib_loader=calib_loader,
+                            baseline_dir=baseline_dir,
+                        )
                     print(f"  Skipped {n}/{total_experiments} (summary.csv updated)")
                     continue
 
@@ -198,6 +331,15 @@ def _run_impl(log_path):
                 # Measure pre-pruning layer structure for logging
                 pre_pruning_layer_info = get_layer_info(model)
 
+                # Snapshot conv parameters before pruning so we can recover
+                # which filters were kept/removed.
+                baseline_state = {
+                    k: v.cpu().clone()
+                    for k, v in model.state_dict().items()
+                    if k.startswith("features.")
+                    and (k.endswith(".weight") or k.endswith(".bias"))
+                }
+
                 print(f"  Applying {method} pruning (scope={scope}, ratio={ratio})...")
                 # Calibration uses held-out set (10k); test set used only for final evaluation.
                 apply_pruning_method(
@@ -208,6 +350,11 @@ def _run_impl(log_path):
                     calib_loader=calib_loader
                 )
                 print("  Pruning applied.")
+
+                print("  Extracting pruning mask...")
+                mask_layers = extract_pruning_mask(baseline_state, model)
+                save_pruning_mask(exp_dir, method, scope, ratio, mask_layers)
+                del baseline_state
 
                 print("  Gathering post-pruning layer info...")
                 # Measure post-pruning layer structure for logging
