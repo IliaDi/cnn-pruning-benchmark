@@ -6,14 +6,14 @@ METHODS = {
         "HRank",
         "LRMF",
         "CHIP",
+        "ThiNet",    # per-layer sequential scoring (ignores scope anyway)
+        "GFS",       # per-layer greedy forward selection
+        "AOFP",      # per-layer DI scoring
+        "DCP",       # per-layer gradient scoring
+        "REPrune",   # per-layer kernel clustering + MCP
     ],
     "global": [
-        "NISP",
-        "ThiNet",
-        "AOFP",
-        "GFS",
-        "DCP", 
-        "REPrune",
+        "NISP",      # the only genuinely global method
     ]
 }
 
