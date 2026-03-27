@@ -7,13 +7,13 @@ METHODS = {
         "LRMF",
         "CHIP",
         "ThiNet",    # per-layer sequential scoring (ignores scope anyway)
-        "GFS",       # per-layer greedy forward selection
-        "AOFP",      # per-layer DI scoring
         "DCP",       # per-layer gradient scoring
-        "REPrune",   # per-layer kernel clustering + MCP
     ],
     "global": [
+        "REPrune",   # global mask from per-layer MCP-based full rankings
         "NISP",      # the only genuinely global method
+        "AOFP",      # DI scoring + global rank-based normalization
+        "GFS",       # global mask from per-layer greedy-selection rankings
     ]
 }
 

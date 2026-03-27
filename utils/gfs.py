@@ -347,9 +347,8 @@ def apply_gfs_pruning(
     for name, module in prunable:
         if isinstance(module, nn.Conv2d):
             print(f"    [{name}] scoring {module.out_channels} conv filters...")
-            # Greedy forward-selection grows a retained set S of size n_keep.
-            n_prune = int(target_ratio * module.out_channels)
-            n_keep = max(1, module.out_channels - n_prune)
+            # Build a full per-layer ranking by selecting all filters in order.
+            n_keep = module.out_channels
             importance = _score_filters_by_greedy_forward_selection(
                 model,
                 name,
@@ -358,7 +357,7 @@ def apply_gfs_pruning(
                 calib_labels,
                 device,
                 n_keep=n_keep,
-                eval_batch_size=256,
+                eval_batch_size=64,
             )
             all_importance[name] = importance
 

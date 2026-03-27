@@ -253,11 +253,10 @@ def _compute_reprune_scores(
     Compute REPrune importance scores for all Conv2d layers.
 
     For each layer:
-      1) Compute n_keep = ceil((1 - target_ratio) * C_out)
-      2) Cluster kernels per input channel with Ward linkage into n_keep
-         clusters.
-      3) Run greedy MCP to select n_keep filters maximising cluster coverage.
-      4) Importance: filters selected earlier get higher scores.
+      1) Cluster kernels per input channel with Ward linkage into
+         (C_out - 1) clusters (max meaningful split).
+      2) Run greedy MCP for C_out steps to get a full selection order.
+      3) Importance: filters selected earlier get higher scores.
     """
     scores: Dict[str, torch.Tensor] = {}
 
@@ -270,15 +269,16 @@ def _compute_reprune_scores(
 
         name = f"features.{idx}"
         C_out = child.out_channels
-        n_keep = max(1, int(np.ceil((1.0 - target_ratio) * C_out)))
+        n_clusters = max(1, C_out - 1)
+        n_keep = C_out
 
         print(
-            f"    [{name}] clustering {C_out} filters into {n_keep} "
+            f"    [{name}] clustering {C_out} filters into {n_clusters} "
             f"representatives per input-channel..."
         )
 
         all_clusters, h_l = _cluster_kernels_per_channel(
-            child.weight, target_n_clusters=n_keep
+            child.weight, target_n_clusters=n_clusters
         )
 
         selected = _greedy_mcp_filter_selection(
@@ -325,6 +325,47 @@ def _build_masks_local(
             f"    [{name}] kept={n_kept}/{n_out} ({100*n_kept/n_out:.1f}%)  "
             f"pruned={n_out-n_kept}/{n_out} ({100*(n_out-n_kept)/n_out:.1f}%)"
         )
+    return masks
+
+
+def _build_masks_global(
+    scores: Dict[str, torch.Tensor],
+    pruning_ratio: float,
+) -> Dict[str, torch.Tensor]:
+    """Global ranking with per-layer min-max normalization."""
+    normalized: Dict[str, torch.Tensor] = {}
+    for name, s in scores.items():
+        s_min = s.min()
+        s_max = s.max()
+        if (s_max - s_min) > 1e-12:
+            normalized[name] = (s - s_min) / (s_max - s_min)
+        else:
+            normalized[name] = torch.ones_like(s)
+
+    layer_names = list(normalized.keys())
+    all_scores = torch.cat([normalized[n] for n in layer_names])
+    n_total = len(all_scores)
+    n_prune = max(1, int(pruning_ratio * n_total))
+    prune_set = set(torch.argsort(all_scores, descending=False)[:n_prune].tolist())
+
+    masks: Dict[str, torch.Tensor] = {}
+    offset = 0
+    for name in layer_names:
+        s = normalized[name]
+        n_out = len(s)
+        keep = torch.tensor(
+            [(offset + i) not in prune_set for i in range(n_out)],
+            dtype=torch.bool,
+        )
+        if keep.sum() == 0:
+            keep[int(torch.argmax(s).item())] = True
+        masks[name] = keep
+        n_kept = int(keep.sum().item())
+        print(
+            f"    [{name}] kept={n_kept}/{n_out} ({100*n_kept/n_out:.1f}%)  "
+            f"pruned={n_out-n_kept}/{n_out} ({100*(n_out-n_kept)/n_out:.1f}%)"
+        )
+        offset += n_out
     return masks
 
 
@@ -422,7 +463,7 @@ def apply_reprune_pruning(
     model: nn.Module,
     dataloader,
     target_ratio: float,
-    scope: str = "local",
+    scope: str = "global",
     device: Optional[torch.device] = None,
     limit_batches: Optional[int] = None,
 ) -> nn.Module:
@@ -431,19 +472,9 @@ def apply_reprune_pruning(
 
     Note: REPrune scores from weight structure only, so `dataloader` is
     accepted for API compatibility but is not used.
-
-    Only ``scope="local"`` is supported: MCP already assigns per-layer
-    keep counts; pooling scores for global ranking would mix zero- and
-    nonzero-scored filters across layers and contradict that selection.
     """
     if not 0.0 < target_ratio < 1.0:
         raise ValueError(f"target_ratio must be in (0, 1), got {target_ratio}")
-
-    if scope == "global":
-        raise ValueError(
-            "REPrune does not support scope='global': per-layer MCP scores must "
-            "be turned into masks with local ranking only (see docstring)."
-        )
 
     if device is None:
         device = next(model.parameters()).device
@@ -476,7 +507,10 @@ def apply_reprune_pruning(
     print(
         f"  REPrune: building masks (scope={scope}, target={target_ratio:.0%} removed)..."
     )
-    masks = _build_masks_local(all_scores, pruning_ratio=target_ratio)
+    if scope == "global":
+        masks = _build_masks_global(all_scores, pruning_ratio=target_ratio)
+    else:
+        masks = _build_masks_local(all_scores, pruning_ratio=target_ratio)
 
     print("  REPrune: applying structural pruning...")
     model = _apply_structural_pruning(model, masks)
