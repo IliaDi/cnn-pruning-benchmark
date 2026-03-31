@@ -332,15 +332,19 @@ def _build_masks_global(
     scores: Dict[str, torch.Tensor],
     pruning_ratio: float,
 ) -> Dict[str, torch.Tensor]:
-    """Global ranking with per-layer min-max normalization."""
+    """Global ranking with per-layer rank-based normalization."""
     normalized: Dict[str, torch.Tensor] = {}
     for name, s in scores.items():
-        s_min = s.min()
-        s_max = s.max()
-        if (s_max - s_min) > 1e-12:
-            normalized[name] = (s - s_min) / (s_max - s_min)
-        else:
+        n = len(s)
+        if n <= 1:
             normalized[name] = torch.ones_like(s)
+            continue
+        ranks = torch.zeros_like(s)
+        sorted_idx = torch.argsort(s, descending=False)
+        denom = float(n - 1)
+        for rank_pos, orig_idx in enumerate(sorted_idx):
+            ranks[orig_idx] = float(rank_pos) / denom
+        normalized[name] = ranks
 
     layer_names = list(normalized.keys())
     all_scores = torch.cat([normalized[n] for n in layer_names])
