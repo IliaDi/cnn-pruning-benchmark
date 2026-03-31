@@ -22,10 +22,7 @@ import torch.nn.functional as F
 
 from utils.apoz import (
     get_prunable_layers,
-    prune_conv2d_layer,
-    prune_linear_layer,
-    _update_output_layer,
-    _get_module_at_path,
+    apply_structural_pruning,
 )
 
 
@@ -188,13 +185,17 @@ def _compute_gradient_importance(
     return {name: acc / n_batches_processed for name, acc in grad_accum.items()}
 
 
-def _build_masks_local(scores: Dict[str, torch.Tensor], pruning_ratio: float) -> Dict[str, torch.Tensor]:
+def _build_masks_local(
+    scores: Dict[str, torch.Tensor],
+    pruning_ratio: float,
+) -> Dict[str, torch.Tensor]:
+    """Per-layer keep-masks for DCP (local ranking)."""
     masks: Dict[str, torch.Tensor] = {}
     for name, s in scores.items():
         n_out = len(s)
         n_prune = max(0, int(pruning_ratio * n_out))
         n_keep = max(1, n_out - n_prune)
-        _, top_idx = torch.topk(s, n_keep)  # higher grad magnitude => keep
+        _, top_idx = torch.topk(s, n_keep)
         keep = torch.zeros(n_out, dtype=torch.bool)
         keep[top_idx] = True
         masks[name] = keep
@@ -206,125 +207,11 @@ def _build_masks_local(scores: Dict[str, torch.Tensor], pruning_ratio: float) ->
     return masks
 
 
-def _build_masks_global(scores: Dict[str, torch.Tensor], pruning_ratio: float) -> Dict[str, torch.Tensor]:
-    # Per-layer min-max normalization prevents heterogeneous score sources
-    # (this is important even when DCP scores come from gradients).
-    normalized: Dict[str, torch.Tensor] = {}
-    for name, s in scores.items():
-        s_min = s.min()
-        s_max = s.max()
-        if (s_max - s_min) > 1e-12:
-            normalized[name] = (s - s_min) / (s_max - s_min)
-        else:
-            normalized[name] = torch.ones_like(s)
-
-    layer_names = list(normalized.keys())
-    all_scores = torch.cat([normalized[n] for n in layer_names])
-    n_total = len(all_scores)
-    n_prune = max(1, int(pruning_ratio * n_total))
-
-    prune_set = set(torch.argsort(all_scores, descending=False)[:n_prune].tolist())
-
-    masks: Dict[str, torch.Tensor] = {}
-    offset = 0
-    for name in layer_names:
-        s = normalized[name]
-        n_out = len(s)
-        keep = torch.tensor(
-            [(offset + i) not in prune_set for i in range(n_out)],
-            dtype=torch.bool,
-        )
-        if keep.sum() == 0:
-            keep[int(torch.argmax(s).item())] = True
-        masks[name] = keep
-        n_kept = int(keep.sum().item())
-        print(
-            f"    [{name}] kept={n_kept}/{n_out} ({100*n_kept/n_out:.1f}%)  "
-            f"pruned={n_out-n_kept}/{n_out} ({100*(n_out-n_kept)/n_out:.1f}%)"
-        )
-        offset += n_out
-    return masks
-
-
-def _apply_structural_pruning(
-    model: nn.Module,
-    masks: Dict[str, torch.Tensor],
-) -> nn.Module:
-    prunable = get_prunable_layers(model)
-    prev_keep: Optional[torch.Tensor] = None
-
-    for i, (name, module) in enumerate(prunable):
-        parts = name.split(".")
-        parent = model
-        for p in parts[:-1]:
-            parent = getattr(parent, p)
-        layer_idx = int(parts[-1])
-
-        if isinstance(module, nn.Conv2d):
-            keep_out = masks.get(name, torch.ones(module.out_channels, dtype=torch.bool))
-            parent[layer_idx] = prune_conv2d_layer(module, keep_out, keep_in=prev_keep)
-            prev_keep = keep_out
-
-        elif isinstance(module, nn.Linear):
-            keep_out = masks.get(name, torch.ones(module.out_features, dtype=torch.bool))
-            prev_name, prev_orig = prunable[i - 1] if i > 0 else (None, None)
-            follows_conv = prev_orig is not None and isinstance(prev_orig, nn.Conv2d)
-
-            if follows_conv and prev_keep is not None:
-                spatial = module.in_features // prev_orig.out_channels
-                kept_ch = torch.where(prev_keep)[0].tolist()
-                flat_idx = torch.tensor(
-                    [c * spatial + s for c in kept_ch for s in range(spatial)],
-                    dtype=torch.long,
-                )
-                out_idx = torch.where(keep_out)[0].tolist()
-                new_module = nn.Linear(
-                    len(kept_ch) * spatial,
-                    len(out_idx),
-                    bias=module.bias is not None,
-                )
-                new_module.weight.data = module.weight.data[out_idx][:, flat_idx].clone()
-                if module.bias is not None:
-                    new_module.bias.data = module.bias.data[out_idx].clone()
-            else:
-                in_feat_live = None
-                if prev_name is not None:
-                    in_feat_live = _get_module_at_path(model, prev_name).out_features
-                new_module = prune_linear_layer(
-                    module,
-                    keep_out,
-                    keep_in=prev_keep,
-                    in_features_override=in_feat_live,
-                )
-
-            parent[layer_idx] = new_module
-            prev_keep = keep_out
-
-    # Update classification output layer input dim only
-    all_linears = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
-    if all_linears:
-        out_name = all_linears[-1]
-        out_parts = out_name.split(".")
-        out_par = model
-        for p in out_parts[:-1]:
-            out_par = getattr(out_par, p)
-        out_idx_int = int(out_parts[-1])
-        out_mod = out_par[out_idx_int]
-
-        new_in = None
-        if prunable:
-            new_in = _get_module_at_path(model, prunable[-1][0]).out_features
-
-        out_par[out_idx_int] = _update_output_layer(out_mod, prev_keep, in_features_override=new_in)
-
-    return model
-
-
 def apply_dcp_pruning(
     model: nn.Module,
     dataloader,
     target_ratio: float,
-    scope: str = "global",
+    scope: str = "local",
     device: Optional[torch.device] = None,
     limit_batches: Optional[int] = None,
     num_classes: int = 10,
@@ -352,28 +239,20 @@ def apply_dcp_pruning(
         print("  DCP WARNING: no scores computed; returning model unchanged.")
         return model
 
-    # Filter to prunable names (conv + hidden linear)
-    prunable = get_prunable_layers(model)
-    all_scores: Dict[str, torch.Tensor] = {}
-    for name, module in prunable:
-        if name in scores:
-            all_scores[name] = scores[name]
-        elif isinstance(module, nn.Linear):
-            # Fallback for hidden linear layers when DI gradients are unavailable
-            all_scores[name] = module.weight.data.abs().sum(dim=1).cpu()
+    # Only Conv2d scores (FC layers are not output-pruned).
+    all_scores: Dict[str, torch.Tensor] = {
+        name: s for name, s in scores.items()
+    }
 
     if not all_scores:
         print("  DCP WARNING: no prunable scores; returning model unchanged.")
         return model
 
-    print(f"  DCP: building keep-masks (scope={scope}, removing {target_ratio:.0%} of channels)...")
-    if scope == "global":
-        masks = _build_masks_global(all_scores, pruning_ratio=target_ratio)
-    else:
-        masks = _build_masks_local(all_scores, pruning_ratio=target_ratio)
+    print(f"  DCP: building keep-masks (local, removing {target_ratio:.0%} of channels)...")
+    masks = _build_masks_local(all_scores, pruning_ratio=target_ratio)
 
     print("  DCP: applying structural pruning...")
-    model = _apply_structural_pruning(model, masks)
+    model = apply_structural_pruning(model, masks)
     print("  DCP pruning complete.")
     return model
 

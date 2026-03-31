@@ -24,10 +24,7 @@ import torch.nn.functional as F
 
 from utils.apoz import (
     get_prunable_layers,
-    prune_conv2d_layer,
-    prune_linear_layer,
-    _update_output_layer,
-    _get_module_at_path,
+    apply_structural_pruning,
 )
 
 
@@ -289,91 +286,6 @@ def _thinet_select_channels(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Structural pruning (shared surgery from apoz.py)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _apply_structural_pruning(
-    model: nn.Module, masks: Dict[str, torch.Tensor]
-) -> nn.Module:
-    """Apply structural channel removal using shared helpers from apoz.py."""
-    prunable = get_prunable_layers(model)
-    prev_keep: Optional[torch.Tensor] = None
-
-    for i, (name, module) in enumerate(prunable):
-        parts = name.split(".")
-        parent = model
-        for p in parts[:-1]:
-            parent = getattr(parent, p)
-        layer_idx = int(parts[-1])
-
-        if isinstance(module, nn.Conv2d):
-            keep_out = masks.get(
-                name, torch.ones(module.out_channels, dtype=torch.bool)
-            )
-            parent[layer_idx] = prune_conv2d_layer(
-                module, keep_out, keep_in=prev_keep
-            )
-            prev_keep = keep_out
-
-        elif isinstance(module, nn.Linear):
-            keep_out = masks.get(
-                name, torch.ones(module.out_features, dtype=torch.bool)
-            )
-            prev_name, prev_orig = prunable[i - 1] if i > 0 else (None, None)
-            follows_conv = prev_orig is not None and isinstance(prev_orig, nn.Conv2d)
-
-            if follows_conv and prev_keep is not None:
-                spatial = module.in_features // prev_orig.out_channels
-                kept_ch = torch.where(prev_keep)[0].tolist()
-                flat_idx = torch.tensor(
-                    [c * spatial + s for c in kept_ch for s in range(spatial)],
-                    dtype=torch.long,
-                )
-                out_idx = torch.where(keep_out)[0].tolist()
-                new_module = nn.Linear(
-                    len(kept_ch) * spatial,
-                    len(out_idx),
-                    bias=module.bias is not None,
-                )
-                new_module.weight.data = (
-                    module.weight.data[out_idx][:, flat_idx].clone()
-                )
-                if module.bias is not None:
-                    new_module.bias.data = module.bias.data[out_idx].clone()
-            else:
-                in_feat_live = None
-                if prev_name is not None:
-                    in_feat_live = _get_module_at_path(model, prev_name).out_features
-                new_module = prune_linear_layer(
-                    module,
-                    keep_out,
-                    keep_in=prev_keep,
-                    in_features_override=in_feat_live,
-                )
-
-            parent[layer_idx] = new_module
-            prev_keep = keep_out
-
-    all_linears = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
-    if all_linears:
-        out_name = all_linears[-1]
-        out_parts = out_name.split(".")
-        out_par = model
-        for p in out_parts[:-1]:
-            out_par = getattr(out_par, p)
-        out_idx_int = int(out_parts[-1])
-        out_mod = out_par[out_idx_int]
-        new_in = None
-        if prunable:
-            new_in = _get_module_at_path(model, prunable[-1][0]).out_features
-        out_par[out_idx_int] = _update_output_layer(
-            out_mod, prev_keep, in_features_override=new_in
-        )
-
-    return model
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -381,20 +293,20 @@ def apply_thinet_pruning(
     model: nn.Module,
     dataloader,
     target_ratio: float,
-    scope: str = "global",
+    scope: str = "local",
     device: Optional[torch.device] = None,
     limit_batches: Optional[int] = None,
 ) -> nn.Module:
     """
-    Apply ThiNet-based structural filter pruning.
+    Apply ThiNet-based structural filter pruning (per-layer uniform ratio).
 
     Parameters
     ----------
     model        : VGG-16 PyTorch model (torchvision-style).
     dataloader   : Calibration DataLoader (no augmentation).
     target_ratio : Fraction of filters to REMOVE (0.3 → remove 30%).
-    scope        : Included for API symmetry; ThiNet is inherently global
-                   and ignores this argument.
+    scope        : Included for API symmetry; ThiNet applies a fixed per-layer
+                   ratio (local).
     device       : Compute device; inferred if None.
     limit_batches: Cap on calibration batches.
     """
@@ -467,29 +379,8 @@ def apply_thinet_pruning(
             f"pruned={C-n_kept}/{C} ({100*(C-n_kept)/C:.1f}%)"
         )
 
-    # Hidden linears: simple magnitude-based pruning
-    prunable_linears = [
-        (n, m) for n, m in get_prunable_layers(model) if isinstance(m, nn.Linear)
-    ]
-    for name, module in prunable_linears:
-        if name in masks:
-            continue
-        D = module.out_features
-        n_remove = max(0, int(target_ratio * D))
-        n_keep = max(1, D - n_remove)
-        importance = module.weight.data.abs().sum(dim=1)
-        _, top_idx = torch.topk(importance, n_keep)
-        keep = torch.zeros(D, dtype=torch.bool)
-        keep[top_idx] = True
-        masks[name] = keep
-        n_kept = int(keep.sum().item())
-        print(
-            f"    [{name}] (linear fallback) kept={n_kept}/{D} ({100*n_kept/D:.1f}%)  "
-            f"pruned={D-n_kept}/{D} ({100*(D-n_kept)/D:.1f}%)"
-        )
-
     print("  ThiNet: applying structural pruning...")
-    model = _apply_structural_pruning(model, masks)
+    model = apply_structural_pruning(model, masks)
     print("  ThiNet pruning complete.")
     return model
 

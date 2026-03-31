@@ -36,11 +36,7 @@ import numpy as np
 # Reuse the structural weight-surgery helpers already tested in the project.
 # This guarantees identical channel-removal behaviour across all methods.
 from utils.apoz import (
-    get_prunable_layers,
-    prune_conv2d_layer,
-    prune_linear_layer,
-    _update_output_layer,
-    _get_module_at_path,
+    apply_structural_pruning,
 )
 
 
@@ -238,47 +234,6 @@ def _build_keep_masks_local(
     return masks
 
 
-def _build_keep_masks_global(
-    scores: Dict[str, torch.Tensor],
-    pruning_ratio: float,
-) -> Dict[str, torch.Tensor]:
-    """
-    Global ranking (global scope).
-
-    Rank all filters across all layers jointly by entropy and prune the
-    globally lowest-scoring ``pruning_ratio`` fraction.
-    Always keeps ≥ 1 filter per layer as a safety guard.
-    """
-    layer_names = list(scores.keys())
-    all_scores  = torch.cat([scores[n] for n in layer_names])
-    n_total     = len(all_scores)
-    n_prune     = max(1, int(pruning_ratio * n_total))
-
-    prune_set = set(
-        torch.argsort(all_scores, descending=False)[:n_prune].tolist()
-    )
-
-    masks: Dict[str, torch.Tensor] = {}
-    offset = 0
-    for lname in layer_names:
-        s     = scores[lname]
-        n_out = len(s)
-        keep  = torch.tensor(
-            [(offset + i) not in prune_set for i in range(n_out)],
-            dtype=torch.bool,
-        )
-        if keep.sum() == 0:                          # safety: keep the best filter
-            keep[int(torch.argmax(s).item())] = True
-        masks[lname] = keep
-
-        n_kept   = keep.sum().item()
-        n_pruned = (~keep).sum().item()
-        print(f"    [{lname}] kept={n_kept}/{n_out} ({100*n_kept/n_out:.1f}%)  "
-              f"pruned={n_pruned}/{n_out} ({100*n_pruned/n_out:.1f}%)")
-        offset += n_out
-    return masks
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
@@ -347,86 +302,10 @@ def apply_entropy_pruning(
     print(f"  Building pruning masks "
           f"(target: {target_ratio:.0%} removed, scope: {scope})...")
 
-    if scope == "local":
-        masks = _build_keep_masks_local(scores, target_ratio)
-    elif scope == "global":
-        masks = _build_keep_masks_global(scores, target_ratio)
-    else:
-        raise ValueError(f"scope must be 'local' or 'global', got '{scope}'")
+    masks = _build_keep_masks_local(scores, target_ratio)
 
-    # ── Step 5: Structural weight surgery (forward order) ─────────────────────
-    # ``get_prunable_layers`` returns (Conv2d + hidden Linear) layers,
-    # excluding the final classification layer.
-    prunable  = get_prunable_layers(model)
-    prev_keep: Optional[torch.Tensor] = None
-
-    for i, (name, module) in enumerate(prunable):
-        parts  = name.split(".")
-        parent = model
-        for p in parts[:-1]:
-            parent = getattr(parent, p)
-        layer_idx = int(parts[-1])
-
-        # ── Conv2d ────────────────────────────────────────────────────────────
-        if isinstance(module, nn.Conv2d):
-            keep_out = masks.get(name, torch.ones(module.out_channels, dtype=torch.bool))
-            parent[layer_idx] = prune_conv2d_layer(module, keep_out, keep_in=prev_keep)
-            prev_keep = keep_out
-
-        # ── Hidden Linear ─────────────────────────────────────────────────────
-        elif isinstance(module, nn.Linear):
-            keep_out  = masks.get(name, torch.ones(module.out_features, dtype=torch.bool))
-
-            prev_name, prev_orig = prunable[i - 1] if i > 0 else (None, None)
-            follows_conv = (prev_orig is not None and isinstance(prev_orig, nn.Conv2d))
-
-            if follows_conv and prev_keep is not None:
-                # Expand channel-level mask to cover all H×W spatial positions
-                spatial  = module.in_features // prev_orig.out_channels
-                kept_ch  = torch.where(prev_keep)[0].tolist()
-                flat_idx = torch.tensor(
-                    [c * spatial + s for c in kept_ch for s in range(spatial)],
-                    dtype=torch.long,
-                )
-                out_idx    = torch.where(keep_out)[0].tolist()
-                new_module = nn.Linear(
-                    len(kept_ch) * spatial, len(out_idx),
-                    bias=module.bias is not None,
-                )
-                new_module.weight.data = module.weight.data[out_idx][:, flat_idx].clone()
-                if module.bias is not None:
-                    new_module.bias.data = module.bias.data[out_idx].clone()
-            else:
-                in_feat_live = None
-                if prev_name is not None:
-                    in_feat_live = _get_module_at_path(model, prev_name).out_features
-                new_module = prune_linear_layer(
-                    module, keep_out,
-                    keep_in=prev_keep,
-                    in_features_override=in_feat_live,
-                )
-
-            parent[layer_idx] = new_module
-            prev_keep = keep_out
-
-    # ── Step 6: Final classification layer (input dim only) ───────────────────
-    all_linears = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
-    if all_linears:
-        out_name  = all_linears[-1]
-        out_parts = out_name.split(".")
-        out_par   = model
-        for p in out_parts[:-1]:
-            out_par = getattr(out_par, p)
-        out_idx_int = int(out_parts[-1])
-        out_mod     = out_par[out_idx_int]
-
-        new_in = None
-        if prunable:
-            new_in = _get_module_at_path(model, prunable[-1][0]).out_features
-
-        out_par[out_idx_int] = _update_output_layer(
-            out_mod, prev_keep, in_features_override=new_in
-        )
+    # ── Step 5–6: Structural weight surgery ──────────────────────────────────
+    model = apply_structural_pruning(model, masks)
 
     print("  Entropy pruning complete.")
     return model

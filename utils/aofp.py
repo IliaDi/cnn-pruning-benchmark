@@ -5,10 +5,13 @@ Ding et al. (2019), "Approximated Oracle Filter Pruning for Destructive CNN
 Width Optimization" (ICML 2019).
 
 This implementation:
-- Scores conv filters via **Damage Isolation**: how much the next conv layer’s
+- Scores conv filters via **Damage Isolation**: how much the next layer’s
   output changes when a filter is randomly ablated.
-- Uses global or per-layer ranking across conv and hidden linear layers
-  (with a weight‑magnitude fallback when there is no next conv).
+- For the last conv layer (no following conv), DI is extended by forwarding
+  through MaxPool + AvgPool + first FC layer to measure damage at the
+  classifier input — faithful to the paper’s "immediately following layer".
+- Uses global ranking across all Conv2d layers (no normalization needed
+  since all scores are DI-based on a common scale).
 - Applies one‑shot **structural** pruning using helpers from `utils.apoz`;
   fine‑tuning is handled externally by the shared training utilities.
 """
@@ -22,10 +25,7 @@ import torch.nn as nn
 
 from utils.apoz import (
     get_prunable_layers,
-    prune_conv2d_layer,
-    prune_linear_layer,
-    _update_output_layer,
-    _get_module_at_path,
+    apply_structural_pruning,
 )
 
 
@@ -62,6 +62,33 @@ def _forward_from_conv_to_next(
     return out
 
 
+def _forward_from_last_conv_to_fc(
+    x: torch.Tensor,
+    model: nn.Module,
+    conv_name: str,
+) -> torch.Tensor:
+    """
+    Forward `x` from just after the last Conv2d through remaining features
+    layers (MaxPool), avgpool, flatten, and the first FC layer.
+
+    This extends Damage Isolation to the last conv layer by measuring
+    damage at the immediately following layer in the network, which is
+    the classifier's first Linear layer (via pool + flatten).
+    """
+    conv_idx = int(conv_name.split(".")[-1])
+
+    out = x
+    # Forward through remaining features layers (e.g. MaxPool after last conv)
+    for idx in range(conv_idx + 1, len(model.features)):
+        out = model.features[idx](out)
+
+    # avgpool + flatten + first FC layer
+    out = model.avgpool(out)
+    out = torch.flatten(out, 1)
+    out = model.classifier[0](out)
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Damage Isolation scoring
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,33 +104,53 @@ def _score_filters_damage_isolation(
     """
     Compute AOFP Damage Isolation scores for each conv filter.
 
-    For each conv layer i:
+    For each conv layer i with a following conv layer:
       - Collect conv_i outputs on calibration data.
       - In each ablation round, randomly zero half of the channels, forward
         to the next conv, and measure normalised output deviation.
       - Average damage per filter over all rounds.
+
+    For the last conv layer (no following conv), DI is extended by
+    forwarding through MaxPool + AvgPool + first FC layer, measuring
+    damage at the classifier input.
     """
     model.eval()
     pairs = _get_conv_layer_pairs(model)
     if not pairs:
         return {}
 
+    # Identify the last conv layer in features (may not be in any pair as first)
+    all_convs = [
+        (f"features.{name}", mod)
+        for name, mod in model.features.named_children()
+        if isinstance(mod, nn.Conv2d)
+    ]
+    last_conv_name, last_conv_mod = all_convs[-1]
+    paired_first_names = {name_i for name_i, _, _, _ in pairs}
+
+    # Layers to score via DI: all paired first-conv layers + the last conv
+    score_targets: Dict[str, nn.Conv2d] = {}
+    for name_i, conv_i, _, _ in pairs:
+        score_targets[name_i] = conv_i
+    if last_conv_name not in paired_first_names:
+        score_targets[last_conv_name] = last_conv_mod
+
     damage_sum: Dict[str, torch.Tensor] = {}
     damage_count: Dict[str, torch.Tensor] = {}
-    for name_i, conv_i, _, _ in pairs:
-        C = conv_i.out_channels
-        damage_sum[name_i] = torch.zeros(C, device="cpu")
-        damage_count[name_i] = torch.zeros(C, device="cpu")
+    for name, conv in score_targets.items():
+        C = conv.out_channels
+        damage_sum[name] = torch.zeros(C, device="cpu")
+        damage_count[name] = torch.zeros(C, device="cpu")
 
     conv_outputs: Dict[str, torch.Tensor] = {}
     hooks: List[torch.utils.hooks.RemovableHandle] = []
 
-    for name_i, conv_i, _, _ in pairs:
+    for name, conv in score_targets.items():
         def make_hook(layer_name: str):
             def hook_fn(module, inp, out):
                 conv_outputs[layer_name] = out.detach()
             return hook_fn
-        hooks.append(conv_i.register_forward_hook(make_hook(name_i)))
+        hooks.append(conv.register_forward_hook(make_hook(name)))
 
     try:
         for batch_idx, (images, _) in enumerate(dataloader):
@@ -113,6 +160,7 @@ def _score_filters_damage_isolation(
             images = images.to(device)
             _ = model(images)
 
+            # Score paired conv layers (forward to next conv)
             for name_i, conv_i, name_next, _ in pairs:
                 if name_i not in conv_outputs:
                     continue
@@ -120,7 +168,7 @@ def _score_filters_damage_isolation(
                 B, C, _, _ = feat.shape
 
                 ref = _forward_from_conv_to_next(feat, model, name_i, name_next)
-                ref_norm_sq = (ref ** 2).sum(dim=(1, 2, 3)).clamp(min=1e-10)  # (B,)
+                ref_norm_sq = (ref ** 2).sum(dim=(1, 2, 3)).clamp(min=1e-10)
 
                 for _round in range(n_ablation_rounds):
                     n_ablate = max(1, C // 2)
@@ -130,57 +178,68 @@ def _score_filters_damage_isolation(
                     ablated[:, idxs, :, :] = 0.0
                     ref_abl = _forward_from_conv_to_next(ablated, model, name_i, name_next)
 
-                    diff_sq = ((ref - ref_abl) ** 2).sum(dim=(1, 2, 3))  # (B,)
+                    diff_sq = ((ref - ref_abl) ** 2).sum(dim=(1, 2, 3))
                     t = (diff_sq / ref_norm_sq).mean().item()
 
                     for j in idxs.tolist():
                         damage_sum[name_i][j] += t
                         damage_count[name_i][j] += 1
+
+            # Score last conv layer (forward through classifier)
+            if last_conv_name not in paired_first_names and last_conv_name in conv_outputs:
+                feat = conv_outputs[last_conv_name]
+                B, C, _, _ = feat.shape
+
+                ref = _forward_from_last_conv_to_fc(feat, model, last_conv_name)
+                # ref is (B, D) where D = first FC output features
+                ref_norm_sq = (ref ** 2).sum(dim=1).clamp(min=1e-10)
+
+                for _round in range(n_ablation_rounds):
+                    n_ablate = max(1, C // 2)
+                    idxs = torch.randperm(C, device=feat.device)[:n_ablate]
+
+                    ablated = feat.clone()
+                    ablated[:, idxs, :, :] = 0.0
+                    ref_abl = _forward_from_last_conv_to_fc(ablated, model, last_conv_name)
+
+                    diff_sq = ((ref - ref_abl) ** 2).sum(dim=1)
+                    t = (diff_sq / ref_norm_sq).mean().item()
+
+                    for j in idxs.tolist():
+                        damage_sum[last_conv_name][j] += t
+                        damage_count[last_conv_name][j] += 1
     finally:
         for h in hooks:
             h.remove()
 
     scores: Dict[str, torch.Tensor] = {}
-    for name_i, conv_i, _, _ in pairs:
-        C = conv_i.out_channels
-        count = damage_count[name_i].clamp(min=1)
-        s = (damage_sum[name_i] / count).reshape(C)
-        scores[name_i] = s
+    for name, conv in score_targets.items():
+        C = conv.out_channels
+        count = damage_count[name].clamp(min=1)
+        s = (damage_sum[name] / count).reshape(C)
+        scores[name] = s
     return scores
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fallback scoring and masks
+# Fallback scoring and global mask building
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _score_by_weight_magnitude(module: nn.Module) -> torch.Tensor:
-    """Simple L1 magnitude scoring for conv/linear layers."""
-    if isinstance(module, nn.Conv2d):
-        return module.weight.data.abs().sum(dim=(1, 2, 3)).cpu()
-    if isinstance(module, nn.Linear):
-        return module.weight.data.abs().sum(dim=1).cpu()
-    raise TypeError(f"AOFP: unsupported module type {type(module)}")
+def _score_by_weight_magnitude(module: nn.Conv2d) -> torch.Tensor:
+    """Simple L1 magnitude scoring for conv layers without a DI pair."""
+    return module.weight.data.abs().sum(dim=(1, 2, 3)).cpu()
 
 
-def _build_masks_local(scores: Dict[str, torch.Tensor], pruning_ratio: float) -> Dict[str, torch.Tensor]:
-    masks: Dict[str, torch.Tensor] = {}
-    for name, s in scores.items():
-        n_out = len(s)
-        n_prune = max(0, int(pruning_ratio * n_out))
-        n_keep = max(1, n_out - n_prune)
-        _, top_idx = torch.topk(s, n_keep)
-        keep = torch.zeros(n_out, dtype=torch.bool)
-        keep[top_idx] = True
-        masks[name] = keep
-        n_kept = int(keep.sum().item())
-        print(
-            f"    [{name}] kept={n_kept}/{n_out} ({100*n_kept/n_out:.1f}%)  "
-            f"pruned={n_out-n_kept}/{n_out} ({100*(n_out-n_kept)/n_out:.1f}%)"
-        )
-    return masks
+def _build_masks_global(
+    scores: Dict[str, torch.Tensor],
+    pruning_ratio: float,
+) -> Dict[str, torch.Tensor]:
+    """
+    Build keep-masks using global ranking across all Conv2d layers.
 
-
-def _build_masks_global(scores: Dict[str, torch.Tensor], pruning_ratio: float) -> Dict[str, torch.Tensor]:
+    Raw scores are used directly (no per-layer normalization) since all
+    scored layers are Conv2d.
+    """
     layer_names = list(scores.keys())
     all_scores = torch.cat([scores[n] for n in layer_names])
     n_total = len(all_scores)
@@ -208,81 +267,6 @@ def _build_masks_global(scores: Dict[str, torch.Tensor], pruning_ratio: float) -
         )
         offset += n_out
     return masks
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Structural pruning (reuse APoZ helpers)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _apply_structural_pruning(model: nn.Module, masks: Dict[str, torch.Tensor]) -> nn.Module:
-    prunable = get_prunable_layers(model)
-    prev_keep: Optional[torch.Tensor] = None
-
-    for i, (name, module) in enumerate(prunable):
-        parts = name.split(".")
-        parent = model
-        for p in parts[:-1]:
-            parent = getattr(parent, p)
-        layer_idx = int(parts[-1])
-
-        if isinstance(module, nn.Conv2d):
-            keep_out = masks.get(name, torch.ones(module.out_channels, dtype=torch.bool))
-            parent[layer_idx] = prune_conv2d_layer(module, keep_out, keep_in=prev_keep)
-            prev_keep = keep_out
-
-        elif isinstance(module, nn.Linear):
-            keep_out = masks.get(name, torch.ones(module.out_features, dtype=torch.bool))
-            prev_name, prev_orig = prunable[i - 1] if i > 0 else (None, None)
-            follows_conv = prev_orig is not None and isinstance(prev_orig, nn.Conv2d)
-
-            if follows_conv and prev_keep is not None:
-                spatial = module.in_features // prev_orig.out_channels
-                kept_ch = torch.where(prev_keep)[0].tolist()
-                flat_idx = torch.tensor(
-                    [c * spatial + s for c in kept_ch for s in range(spatial)],
-                    dtype=torch.long,
-                )
-                out_idx = torch.where(keep_out)[0].tolist()
-                new_module = nn.Linear(
-                    len(kept_ch) * spatial,
-                    len(out_idx),
-                    bias=module.bias is not None,
-                )
-                new_module.weight.data = module.weight.data[out_idx][:, flat_idx].clone()
-                if module.bias is not None:
-                    new_module.bias.data = module.bias.data[out_idx].clone()
-            else:
-                in_feat_live = None
-                if prev_name is not None:
-                    in_feat_live = _get_module_at_path(model, prev_name).out_features
-                new_module = prune_linear_layer(
-                    module,
-                    keep_out,
-                    keep_in=prev_keep,
-                    in_features_override=in_feat_live,
-                )
-
-            parent[layer_idx] = new_module
-            prev_keep = keep_out
-
-    # Resize final classification layer input
-    all_linears = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
-    if all_linears:
-        out_name = all_linears[-1]
-        out_parts = out_name.split(".")
-        out_par = model
-        for p in out_parts[:-1]:
-            out_par = getattr(out_par, p)
-        out_idx = int(out_parts[-1])
-        out_mod = out_par[out_idx]
-
-        new_in = None
-        if prunable:
-            new_in = _get_module_at_path(model, prunable[-1][0]).out_features
-
-        out_par[out_idx] = _update_output_layer(out_mod, prev_keep, in_features_override=new_in)
-
-    return model
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -314,45 +298,25 @@ def apply_aofp_pruning(
         limit_batches=limit_batches,
     )
 
+    # Only score Conv2d layers (FC layers are not output-pruned).
     prunable = get_prunable_layers(model)
     all_scores: Dict[str, torch.Tensor] = {}
     for name, module in prunable:
-        if name in di_scores:
-            all_scores[name] = di_scores[name]
-        else:
-            all_scores[name] = _score_by_weight_magnitude(module)
+        if isinstance(module, nn.Conv2d):
+            if name in di_scores:
+                all_scores[name] = di_scores[name]
+            else:
+                all_scores[name] = _score_by_weight_magnitude(module)
 
     if not all_scores:
         print("  AOFP WARNING: no scores computed; returning model unchanged.")
         return model
 
-    print(f"  AOFP: building masks (scope={scope}, target={target_ratio:.0%} removed)...")
-    if scope == "global":
-        # Global ranking mixes heterogeneous score sources (DI for conv,
-        # weight-magnitude fallback for layers without a next-conv pair).
-        # DI layers can have very low within-layer variance; min-max can
-        # collapse most filters into a narrow band. Use per-layer rank
-        # (percentile) normalization so each layer contributes comparably.
-        normalized: Dict[str, torch.Tensor] = {}
-        for name, s in all_scores.items():
-            n = len(s)
-            if n <= 1:
-                normalized[name] = torch.ones_like(s)
-                continue
-
-            ranks = torch.zeros_like(s)
-            sorted_idx = torch.argsort(s, descending=False)
-            denom = float(n - 1)
-            for rank_pos, orig_idx in enumerate(sorted_idx):
-                ranks[orig_idx] = float(rank_pos) / denom
-            normalized[name] = ranks
-
-        masks = _build_masks_global(normalized, pruning_ratio=target_ratio)
-    else:
-        masks = _build_masks_local(all_scores, pruning_ratio=target_ratio)
+    print(f"  AOFP: building masks (global, target={target_ratio:.0%} removed)...")
+    masks = _build_masks_global(all_scores, pruning_ratio=target_ratio)
 
     print("  AOFP: applying structural pruning...")
-    model = _apply_structural_pruning(model, masks)
+    model = apply_structural_pruning(model, masks)
     print("  AOFP pruning complete.")
     return model
 

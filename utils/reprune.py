@@ -33,10 +33,7 @@ import torch.nn as nn
 
 from utils.apoz import (
     get_prunable_layers,
-    prune_conv2d_layer,
-    prune_linear_layer,
-    _update_output_layer,
-    _get_module_at_path,
+    apply_structural_pruning,
 )
 
 
@@ -303,51 +300,22 @@ def _compute_reprune_scores(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Keep-mask construction
+# Keep-mask construction (global only — REPrune is a global-ranking method)
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _build_masks_local(
-    scores: Dict[str, torch.Tensor],
-    pruning_ratio: float,
-) -> Dict[str, torch.Tensor]:
-    """Per-layer keep-masks for REPrune (local ranking)."""
-    masks: Dict[str, torch.Tensor] = {}
-    for name, s in scores.items():
-        n_out = len(s)
-        n_prune = max(0, int(pruning_ratio * n_out))
-        n_keep = max(1, n_out - n_prune)
-        _, top_idx = torch.topk(s, n_keep)
-        keep = torch.zeros(n_out, dtype=torch.bool)
-        keep[top_idx] = True
-        masks[name] = keep
-        n_kept = int(keep.sum().item())
-        print(
-            f"    [{name}] kept={n_kept}/{n_out} ({100*n_kept/n_out:.1f}%)  "
-            f"pruned={n_out-n_kept}/{n_out} ({100*(n_out-n_kept)/n_out:.1f}%)"
-        )
-    return masks
-
 
 def _build_masks_global(
     scores: Dict[str, torch.Tensor],
     pruning_ratio: float,
 ) -> Dict[str, torch.Tensor]:
-    """Global ranking with per-layer rank-based normalization."""
-    normalized: Dict[str, torch.Tensor] = {}
-    for name, s in scores.items():
-        n = len(s)
-        if n <= 1:
-            normalized[name] = torch.ones_like(s)
-            continue
-        ranks = torch.zeros_like(s)
-        sorted_idx = torch.argsort(s, descending=False)
-        denom = float(n - 1)
-        for rank_pos, orig_idx in enumerate(sorted_idx):
-            ranks[orig_idx] = float(rank_pos) / denom
-        normalized[name] = ranks
+    """
+    Build keep-masks using global ranking across all Conv2d layers.
 
-    layer_names = list(normalized.keys())
-    all_scores = torch.cat([normalized[n] for n in layer_names])
+    Raw scores are used directly (no per-layer normalization) since all
+    scored layers are Conv2d with MCP selection-order importance on a
+    common ordinal scale.
+    """
+    layer_names = list(scores.keys())
+    all_scores = torch.cat([scores[n] for n in layer_names])
     n_total = len(all_scores)
     n_prune = max(1, int(pruning_ratio * n_total))
     prune_set = set(torch.argsort(all_scores, descending=False)[:n_prune].tolist())
@@ -355,7 +323,7 @@ def _build_masks_global(
     masks: Dict[str, torch.Tensor] = {}
     offset = 0
     for name in layer_names:
-        s = normalized[name]
+        s = scores[name]
         n_out = len(s)
         keep = torch.tensor(
             [(offset + i) not in prune_set for i in range(n_out)],
@@ -371,92 +339,6 @@ def _build_masks_global(
         )
         offset += n_out
     return masks
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Structural pruning (shared surgery from apoz.py)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _apply_structural_pruning(
-    model: nn.Module,
-    masks: Dict[str, torch.Tensor],
-) -> nn.Module:
-    """Apply structural channel removal using shared surgery helpers."""
-    prunable = get_prunable_layers(model)
-    prev_keep: Optional[torch.Tensor] = None
-
-    for i, (name, module) in enumerate(prunable):
-        parts = name.split(".")
-        parent = model
-        for p in parts[:-1]:
-            parent = getattr(parent, p)
-        layer_idx = int(parts[-1])
-
-        if isinstance(module, nn.Conv2d):
-            keep_out = masks.get(
-                name, torch.ones(module.out_channels, dtype=torch.bool)
-            )
-            parent[layer_idx] = prune_conv2d_layer(
-                module, keep_out, keep_in=prev_keep
-            )
-            prev_keep = keep_out
-
-        elif isinstance(module, nn.Linear):
-            keep_out = masks.get(
-                name, torch.ones(module.out_features, dtype=torch.bool)
-            )
-            prev_name, prev_orig = prunable[i - 1] if i > 0 else (None, None)
-            follows_conv = prev_orig is not None and isinstance(prev_orig, nn.Conv2d)
-
-            if follows_conv and prev_keep is not None:
-                spatial = module.in_features // prev_orig.out_channels
-                kept_ch = torch.where(prev_keep)[0].tolist()
-                flat_idx = torch.tensor(
-                    [c * spatial + s for c in kept_ch for s in range(spatial)],
-                    dtype=torch.long,
-                )
-                out_idx = torch.where(keep_out)[0].tolist()
-                new_module = nn.Linear(
-                    len(kept_ch) * spatial,
-                    len(out_idx),
-                    bias=module.bias is not None,
-                )
-                new_module.weight.data = module.weight.data[out_idx][:, flat_idx].clone()
-                if module.bias is not None:
-                    new_module.bias.data = module.bias.data[out_idx].clone()
-            else:
-                in_feat_live = None
-                if prev_name is not None:
-                    in_feat_live = _get_module_at_path(model, prev_name).out_features
-                new_module = prune_linear_layer(
-                    module,
-                    keep_out,
-                    keep_in=prev_keep,
-                    in_features_override=in_feat_live,
-                )
-
-            parent[layer_idx] = new_module
-            prev_keep = keep_out
-
-    # Update output (classification) layer input dim only.
-    all_linears = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
-    if all_linears:
-        out_name = all_linears[-1]
-        out_parts = out_name.split(".")
-        out_par = model
-        for p in out_parts[:-1]:
-            out_par = getattr(out_par, p)
-        out_idx_int = int(out_parts[-1])
-        out_mod = out_par[out_idx_int]
-
-        new_in = None
-        if prunable:
-            new_in = _get_module_at_path(model, prunable[-1][0]).out_features
-        out_par[out_idx_int] = _update_output_layer(
-            out_mod, prev_keep, in_features_override=new_in
-        )
-
-    return model
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -485,7 +367,7 @@ def apply_reprune_pruning(
 
     print(
         f"  REPrune: kernel clustering + MCP filter selection "
-        f"(scope={scope}, target={target_ratio:.0%} removed)..."
+        f"(global, target={target_ratio:.0%} removed)..."
     )
 
     conv_scores = _compute_reprune_scores(model, target_ratio)
@@ -493,31 +375,13 @@ def apply_reprune_pruning(
         print("  REPrune WARNING: no scores computed; returning model unchanged.")
         return model
 
-    # Hidden Linear layers: weight-magnitude fallback.
-    prunable = get_prunable_layers(model)
-    all_scores: Dict[str, torch.Tensor] = {}
-    for name, module in prunable:
-        if name in conv_scores:
-            all_scores[name] = conv_scores[name]
-        elif isinstance(module, nn.Linear):
-            importance = module.weight.data.abs().sum(dim=1).cpu()
-            all_scores[name] = importance
-            print(f"    [{name}] linear layer — using weight magnitude fallback")
-
-    if not all_scores:
-        print("  REPrune WARNING: no prunable scores; returning model unchanged.")
-        return model
-
     print(
-        f"  REPrune: building masks (scope={scope}, target={target_ratio:.0%} removed)..."
+        f"  REPrune: building masks (global, target={target_ratio:.0%} removed)..."
     )
-    if scope == "global":
-        masks = _build_masks_global(all_scores, pruning_ratio=target_ratio)
-    else:
-        masks = _build_masks_local(all_scores, pruning_ratio=target_ratio)
+    masks = _build_masks_global(conv_scores, pruning_ratio=target_ratio)
 
     print("  REPrune: applying structural pruning...")
-    model = _apply_structural_pruning(model, masks)
+    model = apply_structural_pruning(model, masks)
     print("  REPrune pruning complete.")
     return model
 

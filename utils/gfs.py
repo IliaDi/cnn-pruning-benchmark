@@ -26,10 +26,7 @@ import torch.nn.functional as F
 
 from utils.apoz import (
     get_prunable_layers,
-    prune_conv2d_layer,
-    prune_linear_layer,
-    _update_output_layer,
-    _get_module_at_path,
+    apply_structural_pruning,
 )
 
 
@@ -165,140 +162,47 @@ def _score_filters_by_greedy_forward_selection(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Mask building
+# Mask building (global only — GFS is a global-ranking method)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_masks_from_importance(
+def _build_masks_global(
     scores: Dict[str, torch.Tensor],
     pruning_ratio: float,
-    scope: str = "global",
 ) -> Dict[str, torch.Tensor]:
     """
-    Build keep-masks from importance scores.
+    Build keep-masks using global ranking across all Conv2d layers.
 
-    For scope="global": pool all scores across layers, find global threshold.
-    For scope="local": per-layer threshold.
+    Raw scores are used directly (no per-layer normalization) since all
+    scored layers are Conv2d with greedy-selection importance on a common
+    ordinal scale.
     """
-    if scope == "global":
-        layer_names = list(scores.keys())
-        all_scores = torch.cat([scores[n] for n in layer_names])
-        n_total = len(all_scores)
-        n_prune = max(1, int(pruning_ratio * n_total))
-        prune_set = set(
-            torch.argsort(all_scores, descending=False)[:n_prune].tolist()
+    layer_names = list(scores.keys())
+    all_scores = torch.cat([scores[n] for n in layer_names])
+    n_total = len(all_scores)
+    n_prune = max(1, int(pruning_ratio * n_total))
+    prune_set = set(
+        torch.argsort(all_scores, descending=False)[:n_prune].tolist()
+    )
+
+    masks: Dict[str, torch.Tensor] = {}
+    offset = 0
+    for name in layer_names:
+        s = scores[name]
+        n_out = len(s)
+        keep = torch.tensor(
+            [(offset + i) not in prune_set for i in range(n_out)],
+            dtype=torch.bool,
         )
-
-        masks: Dict[str, torch.Tensor] = {}
-        offset = 0
-        for name in layer_names:
-            s = scores[name]
-            n_out = len(s)
-            keep = torch.tensor(
-                [(offset + i) not in prune_set for i in range(n_out)],
-                dtype=torch.bool,
-            )
-            if keep.sum() == 0:
-                keep[int(torch.argmax(s).item())] = True
-            masks[name] = keep
-            n_kept = int(keep.sum().item())
-            print(
-                f"    [{name}] kept={n_kept}/{n_out} ({100*n_kept/n_out:.1f}%)  "
-                f"pruned={n_out-n_kept}/{n_out} ({100*(n_out-n_kept)/n_out:.1f}%)"
-            )
-            offset += n_out
-        return masks
-
-    else:  # local
-        masks = {}
-        for name, s in scores.items():
-            n_out = len(s)
-            n_prune = max(0, int(pruning_ratio * n_out))
-            n_keep = max(1, n_out - n_prune)
-            _, top_idx = torch.topk(s, n_keep)
-            keep = torch.zeros(n_out, dtype=torch.bool)
-            keep[top_idx] = True
-            masks[name] = keep
-            n_kept = int(keep.sum().item())
-            print(
-                f"    [{name}] kept={n_kept}/{n_out} ({100*n_kept/n_out:.1f}%)  "
-                f"pruned={n_out-n_kept}/{n_out} ({100*(n_out-n_kept)/n_out:.1f}%)"
-            )
-        return masks
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Structural pruning (shared surgery from apoz.py)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _apply_structural_pruning(model: nn.Module, masks: Dict[str, torch.Tensor]) -> nn.Module:
-    """Apply structural channel removal using shared helpers from apoz.py."""
-    prunable = get_prunable_layers(model)
-    prev_keep: Optional[torch.Tensor] = None
-
-    for i, (name, module) in enumerate(prunable):
-        parts = name.split(".")
-        parent = model
-        for p in parts[:-1]:
-            parent = getattr(parent, p)
-        layer_idx = int(parts[-1])
-
-        if isinstance(module, nn.Conv2d):
-            keep_out = masks.get(name, torch.ones(module.out_channels, dtype=torch.bool))
-            parent[layer_idx] = prune_conv2d_layer(module, keep_out, keep_in=prev_keep)
-            prev_keep = keep_out
-
-        elif isinstance(module, nn.Linear):
-            keep_out = masks.get(name, torch.ones(module.out_features, dtype=torch.bool))
-            prev_name, prev_orig = prunable[i - 1] if i > 0 else (None, None)
-            follows_conv = prev_orig is not None and isinstance(prev_orig, nn.Conv2d)
-
-            if follows_conv and prev_keep is not None:
-                spatial = module.in_features // prev_orig.out_channels
-                kept_ch = torch.where(prev_keep)[0].tolist()
-                flat_idx = torch.tensor(
-                    [c * spatial + s for c in kept_ch for s in range(spatial)],
-                    dtype=torch.long,
-                )
-                out_idx = torch.where(keep_out)[0].tolist()
-                new_module = nn.Linear(
-                    len(kept_ch) * spatial,
-                    len(out_idx),
-                    bias=module.bias is not None,
-                )
-                new_module.weight.data = module.weight.data[out_idx][:, flat_idx].clone()
-                if module.bias is not None:
-                    new_module.bias.data = module.bias.data[out_idx].clone()
-            else:
-                in_feat_live = None
-                if prev_name is not None:
-                    in_feat_live = _get_module_at_path(model, prev_name).out_features
-                new_module = prune_linear_layer(
-                    module,
-                    keep_out,
-                    keep_in=prev_keep,
-                    in_features_override=in_feat_live,
-                )
-            parent[layer_idx] = new_module
-            prev_keep = keep_out
-
-    # Update output (classification) layer
-    all_linears = [n for n, m in model.named_modules() if isinstance(m, nn.Linear)]
-    if all_linears:
-        out_name = all_linears[-1]
-        out_parts = out_name.split(".")
-        out_par = model
-        for p in out_parts[:-1]:
-            out_par = getattr(out_par, p)
-        out_idx_int = int(out_parts[-1])
-        out_mod = out_par[out_idx_int]
-        new_in = None
-        if prunable:
-            new_in = _get_module_at_path(model, prunable[-1][0]).out_features
-        out_par[out_idx_int] = _update_output_layer(
-            out_mod, prev_keep, in_features_override=new_in
+        if keep.sum() == 0:
+            keep[int(torch.argmax(s).item())] = True
+        masks[name] = keep
+        n_kept = int(keep.sum().item())
+        print(
+            f"    [{name}] kept={n_kept}/{n_out} ({100*n_kept/n_out:.1f}%)  "
+            f"pruned={n_out-n_kept}/{n_out} ({100*(n_out-n_kept)/n_out:.1f}%)"
         )
-
-    return model
+        offset += n_out
+    return masks
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -340,14 +244,13 @@ def apply_gfs_pruning(
     )
     print(f"  GFS: calibration set size = {calib_images.shape[0]} samples")
 
-    # Step 2: score filters in prunable layers
+    # Step 2: score Conv2d filters only (FC layers are not output-pruned)
     prunable = get_prunable_layers(model)
     all_importance: Dict[str, torch.Tensor] = {}
 
     for name, module in prunable:
         if isinstance(module, nn.Conv2d):
             print(f"    [{name}] scoring {module.out_channels} conv filters...")
-            # Build a full per-layer ranking by selecting all filters in order.
             n_keep = module.out_channels
             importance = _score_filters_by_greedy_forward_selection(
                 model,
@@ -361,44 +264,17 @@ def apply_gfs_pruning(
             )
             all_importance[name] = importance
 
-    # Step 3: hidden Linear layers — weight magnitude fallback
-    for name, module in prunable:
-        if isinstance(module, nn.Linear):
-            importance = module.weight.data.abs().sum(dim=1).cpu()
-            all_importance[name] = importance
-            print(f"    [{name}] linear layer — using weight magnitude fallback")
-
     if not all_importance:
         print("  GFS WARNING: no importance scores computed; returning model unchanged.")
         return model
 
-    # Step 4: build keep masks
-    print(f"  GFS: building pruning masks (scope={scope}, target={target_ratio:.0%} removed)...")
-    if scope == "global":
-        # Global ranking mixes heterogeneous score sources (conv greedy-loss
-        # scores and linear weight-magnitude fallback). Use rank-based
-        # (percentile) normalization so each layer contributes a uniform
-        # distribution to the global pool, preventing distributional
-        # differences from biasing the allocation toward one layer type.
-        normalized: Dict[str, torch.Tensor] = {}
-        for name, s in all_importance.items():
-            n = len(s)
-            if n <= 1:
-                normalized[name] = torch.ones_like(s)
-                continue
-            ranks = torch.zeros_like(s)
-            sorted_idx = torch.argsort(s, descending=False)
-            denom = float(n - 1)
-            for rank_pos, orig_idx in enumerate(sorted_idx):
-                ranks[orig_idx] = float(rank_pos) / denom
-            normalized[name] = ranks
-        masks = _build_masks_from_importance(normalized, target_ratio, scope=scope)
-    else:
-        masks = _build_masks_from_importance(all_importance, target_ratio, scope=scope)
+    # Step 3: build keep masks (global ranking, no normalization needed)
+    print(f"  GFS: building pruning masks (global, target={target_ratio:.0%} removed)...")
+    masks = _build_masks_global(all_importance, target_ratio)
 
-    # Step 5: structural pruning
+    # Step 4: structural pruning
     print("  GFS: applying structural pruning...")
-    model = _apply_structural_pruning(model, masks)
+    model = apply_structural_pruning(model, masks)
 
     print("  GFS pruning complete.")
     return model
