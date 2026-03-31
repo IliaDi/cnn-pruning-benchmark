@@ -376,16 +376,22 @@ def apply_gfs_pruning(
     print(f"  GFS: building pruning masks (scope={scope}, target={target_ratio:.0%} removed)...")
     if scope == "global":
         # Global ranking mixes heterogeneous score sources (conv greedy-loss
-        # scores and linear weight-magnitude fallback). Normalize per-layer
-        # so each layer contributes comparably.
+        # scores and linear weight-magnitude fallback). Use rank-based
+        # (percentile) normalization so each layer contributes a uniform
+        # distribution to the global pool, preventing distributional
+        # differences from biasing the allocation toward one layer type.
         normalized: Dict[str, torch.Tensor] = {}
         for name, s in all_importance.items():
-            s_min = s.min()
-            s_max = s.max()
-            if (s_max - s_min) > 1e-12:
-                normalized[name] = (s - s_min) / (s_max - s_min)
-            else:
+            n = len(s)
+            if n <= 1:
                 normalized[name] = torch.ones_like(s)
+                continue
+            ranks = torch.zeros_like(s)
+            sorted_idx = torch.argsort(s, descending=False)
+            denom = float(n - 1)
+            for rank_pos, orig_idx in enumerate(sorted_idx):
+                ranks[orig_idx] = float(rank_pos) / denom
+            normalized[name] = ranks
         masks = _build_masks_from_importance(normalized, target_ratio, scope=scope)
     else:
         masks = _build_masks_from_importance(all_importance, target_ratio, scope=scope)
