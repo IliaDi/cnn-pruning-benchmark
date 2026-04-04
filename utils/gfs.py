@@ -158,6 +158,12 @@ def _score_filters_by_greedy_forward_selection(
     if orig_bias is not None:
         layer_module.bias.data = orig_bias
 
+    # Normalize by n_keep (= N_h = layer width) so ordinal scores are on
+    # (0, 1] across all layers, correcting for the scale artifact where
+    # larger layers produce higher absolute scores.
+    if n_keep > 0:
+        importance = importance / float(n_keep)
+
     return importance.detach().cpu()
 
 

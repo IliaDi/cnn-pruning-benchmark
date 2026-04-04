@@ -286,7 +286,12 @@ def _compute_reprune_scores(
         for rank, filter_i in enumerate(selected):
             importance[filter_i] = float(n_keep - rank)
 
-        scores[name] = importance
+        # Normalize by layer width so scores are on (0, 1] across all
+        # layers, correcting for the ordinal scale artifact (64-filter
+        # layers would otherwise have max score 64 vs 512 for larger
+        # layers).  This preserves the distribution shape unlike rank
+        # normalization.
+        scores[name] = importance / float(C_out)
 
         n_covered_total = sum(
             len(cl) for cl_list in all_clusters for cl in cl_list

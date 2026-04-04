@@ -194,11 +194,25 @@ def _build_masks_global(
     """
     Keep-masks using global ranking across all Conv2d layers.
 
-    Raw scores are used directly (no per-layer normalization) since all
-    scored layers are Conv2d and importance is propagated on a common scale.
+    Per-layer min-max normalization is applied to correct for the
+    systematic scale differences introduced by backward importance
+    propagation through weight matrices (early layers accumulate higher
+    absolute scores than late layers).  Unlike rank normalization, min-max
+    preserves each layer's distribution shape, so layers with many
+    low-importance filters still contribute disproportionately to the
+    prune pool — maintaining genuine global budget allocation.
     """
-    layer_names = list(scores.keys())
-    all_scores = torch.cat([scores[n] for n in layer_names])
+    normalized: Dict[str, torch.Tensor] = {}
+    for name, s in scores.items():
+        s_min = s.min()
+        s_max = s.max()
+        if (s_max - s_min) > 1e-12:
+            normalized[name] = (s - s_min) / (s_max - s_min)
+        else:
+            normalized[name] = torch.ones_like(s)
+
+    layer_names = list(normalized.keys())
+    all_scores = torch.cat([normalized[n] for n in layer_names])
     n_total = len(all_scores)
     n_prune = max(1, int(pruning_ratio * n_total))
 
@@ -209,7 +223,7 @@ def _build_masks_global(
     masks: Dict[str, torch.Tensor] = {}
     offset = 0
     for name in layer_names:
-        s = scores[name]
+        s = normalized[name]
         n_out = len(s)
         keep = torch.tensor(
             [(offset + i) not in prune_set for i in range(n_out)],
