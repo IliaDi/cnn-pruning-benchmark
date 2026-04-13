@@ -185,6 +185,37 @@ def apply_pruning_method(
         )
         
         return model
+    elif method == "NISP_local":
+        from utils.nisp import apply_nisp_pruning
+
+        # NISP-L: same importance scoring as NISP, but per-layer uniform budget
+        device = next(model.parameters()).device
+        model = apply_nisp_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope="local",
+            device=device,
+            limit_batches=limit_batches,
+        )
+
+        return model
+    elif method == "AOFP_local":
+        from utils.aofp import apply_aofp_pruning
+
+        # AOFP-L: same damage-isolation scoring as AOFP, but per-layer uniform budget
+        device = next(model.parameters()).device
+        model = apply_aofp_pruning(
+            model=model,
+            dataloader=calib_loader,
+            target_ratio=target_ratio,
+            scope="local",
+            device=device,
+            limit_batches=limit_batches,
+            n_ablation_rounds=20,
+        )
+
+        return model
     elif method == "DCP":
         from utils.dcp import apply_dcp_pruning
 

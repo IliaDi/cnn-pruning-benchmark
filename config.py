@@ -6,14 +6,16 @@ METHODS = {
         "HRank",
         "LRMF",
         "CHIP",
-        "ThiNet",    # per-layer sequential scoring (ignores scope anyway)
-        "DCP",       # per-layer gradient scoring
+        "ThiNet",      # per-layer sequential scoring (ignores scope anyway)
+        "DCP",         # per-layer gradient scoring
+        "REPrune",     # ordinal MCP ranks / layer-width → uniform distribution → effectively local
+        "GFS",         # ordinal greedy-selection ranks / layer-width → uniform distribution → effectively local
+        "NISP_local",  # NISP importance scoring, per-layer uniform budget allocation
+        "AOFP_local",  # AOFP damage-isolation scoring, per-layer uniform budget allocation
     ],
     "global": [
-        "REPrune",   # global mask from per-layer MCP-based full rankings
-        "NISP",      # the only genuinely global method
-        "AOFP",      # DI scoring + global rank-based normalization
-        "GFS",       # global mask from per-layer greedy-selection rankings
+        "NISP",   # propagated importance + min-max normalisation → genuine non-uniform allocation
+        "AOFP",   # damage-isolation fractions, inherently comparable → genuine non-uniform allocation
     ]
 }
 

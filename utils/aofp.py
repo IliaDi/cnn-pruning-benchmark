@@ -269,6 +269,38 @@ def _build_masks_global(
     return masks
 
 
+def _build_masks_local(
+    scores: Dict[str, torch.Tensor],
+    pruning_ratio: float,
+) -> Dict[str, torch.Tensor]:
+    """
+    Per-layer uniform budget: prune the bottom pruning_ratio fraction of
+    filters in each layer independently.  Scoring is identical to the global
+    variant; only the budget allocation changes.  Used by the AOFP-L variant
+    to isolate the damage-isolation criterion from cross-layer redistribution.
+    """
+    masks: Dict[str, torch.Tensor] = {}
+    for name, s in scores.items():
+        n_out = len(s)
+        n_prune = max(0, int(pruning_ratio * n_out))
+        prune_set = (
+            set(torch.argsort(s, descending=False)[:n_prune].tolist())
+            if n_prune > 0 else set()
+        )
+        keep = torch.tensor(
+            [i not in prune_set for i in range(n_out)], dtype=torch.bool
+        )
+        if keep.sum() == 0:
+            keep[int(torch.argmax(s).item())] = True
+        masks[name] = keep
+        n_kept = int(keep.sum().item())
+        print(
+            f"    [{name}] kept={n_kept}/{n_out} ({100*n_kept/n_out:.1f}%)  "
+            f"pruned={n_out-n_kept}/{n_out} ({100*(n_out-n_kept)/n_out:.1f}%)"
+        )
+    return masks
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
@@ -312,8 +344,12 @@ def apply_aofp_pruning(
         print("  AOFP WARNING: no scores computed; returning model unchanged.")
         return model
 
-    print(f"  AOFP: building masks (global, target={target_ratio:.0%} removed)...")
-    masks = _build_masks_global(all_scores, pruning_ratio=target_ratio)
+    if scope == "local":
+        print(f"  AOFP-L: building masks (per-layer uniform, target={target_ratio:.0%} removed)...")
+        masks = _build_masks_local(all_scores, pruning_ratio=target_ratio)
+    else:
+        print(f"  AOFP: building masks (global, target={target_ratio:.0%} removed)...")
+        masks = _build_masks_global(all_scores, pruning_ratio=target_ratio)
 
     print("  AOFP: applying structural pruning...")
     model = apply_structural_pruning(model, masks)

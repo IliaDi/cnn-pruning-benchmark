@@ -286,11 +286,12 @@ def _compute_reprune_scores(
         for rank, filter_i in enumerate(selected):
             importance[filter_i] = float(n_keep - rank)
 
-        # Normalize by layer width so scores are on (0, 1] across all
-        # layers, correcting for the ordinal scale artifact (64-filter
-        # layers would otherwise have max score 64 vs 512 for larger
-        # layers).  This preserves the distribution shape unlike rank
-        # normalization.
+        # Divide by layer width so scores are on (0, 1] across all layers.
+        # Ordinal selection-order ranks (1..C_out) are inherently uniform
+        # within every layer; dividing by C_out maps all layers to the same
+        # [1/C_out, 1] range, which makes global ranking behave identically to
+        # per-layer uniform pruning.  This is therefore treated as a local
+        # method in the benchmark (see Section~\ref{sec:pruning_protocol}).
         scores[name] = importance / float(C_out)
 
         n_covered_total = sum(
