@@ -347,7 +347,8 @@ def _run_impl(log_path):
                     method=method,
                     scope=scope,
                     target_ratio=ratio,
-                    calib_loader=calib_loader
+                    calib_loader=calib_loader,
+                    checkpoint_path=os.path.join(exp_dir, "gfs_importance_checkpoint.pt"),
                 )
                 print("  Pruning applied.")
 

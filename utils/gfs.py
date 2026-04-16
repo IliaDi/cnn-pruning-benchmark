@@ -18,6 +18,7 @@ This implementation:
 
 from __future__ import annotations
 
+import os
 from typing import Dict, Optional, Tuple
 
 import torch
@@ -222,18 +223,23 @@ def apply_gfs_pruning(
     scope: str = "global",
     device: Optional[torch.device] = None,
     limit_batches: Optional[int] = None,
+    checkpoint_path: Optional[str] = None,
 ) -> nn.Module:
     """
     Apply GFS-based structural filter pruning.
 
     Parameters
     ----------
-    model        : VGG-16 PyTorch model (torchvision-style).
-    dataloader   : Calibration DataLoader (no augmentation).
-    target_ratio : Fraction of filters to REMOVE (0.3 → remove 30%).
-    scope        : "global" (default, pool scores across all layers) or "local".
-    device       : Compute device; inferred if None.
-    limit_batches: Cap on calibration batches.
+    model           : VGG-16 PyTorch model (torchvision-style).
+    dataloader      : Calibration DataLoader (no augmentation).
+    target_ratio    : Fraction of filters to REMOVE (0.3 → remove 30%).
+    scope           : "global" (default, pool scores across all layers) or "local".
+    device          : Compute device; inferred if None.
+    limit_batches   : Cap on calibration batches.
+    checkpoint_path : Optional path to a .pt file for saving/resuming per-layer
+                      importance scores. After each layer is scored the dict is
+                      written to this file. If the file already exists on entry,
+                      completed layers are loaded and skipped.
     """
     if not 0.0 < target_ratio < 1.0:
         raise ValueError(f"target_ratio must be in (0, 1), got {target_ratio}")
@@ -254,8 +260,16 @@ def apply_gfs_pruning(
     prunable = get_prunable_layers(model)
     all_importance: Dict[str, torch.Tensor] = {}
 
+    # Load any previously saved checkpoint so completed layers can be skipped.
+    if checkpoint_path and os.path.isfile(checkpoint_path):
+        all_importance = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        print(f"  GFS: resuming from checkpoint ({len(all_importance)} layers already scored)")
+
     for name, module in prunable:
         if isinstance(module, nn.Conv2d):
+            if name in all_importance:
+                print(f"    [{name}] skipping (already scored)")
+                continue
             print(f"    [{name}] scoring {module.out_channels} conv filters...")
             n_keep = module.out_channels
             importance = _score_filters_by_greedy_forward_selection(
@@ -269,6 +283,8 @@ def apply_gfs_pruning(
                 eval_batch_size=64,
             )
             all_importance[name] = importance
+            if checkpoint_path:
+                torch.save(all_importance, checkpoint_path)
 
     if not all_importance:
         print("  GFS WARNING: no importance scores computed; returning model unchanged.")

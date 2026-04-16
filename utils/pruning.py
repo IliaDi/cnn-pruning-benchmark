@@ -11,7 +11,8 @@ def apply_pruning_method(
     scope,
     target_ratio,
     limit_batches=None,
-    calib_loader=None
+    calib_loader=None,
+    checkpoint_path=None,
 ):
     """
     Apply structural pruning to the model.
@@ -157,7 +158,7 @@ def apply_pruning_method(
         return model
     elif method == "GFS":
         from utils.gfs import apply_gfs_pruning
-        
+
         # Apply GFS pruning (global greedy forward selection)
         device = next(model.parameters()).device
         model = apply_gfs_pruning(
@@ -166,7 +167,8 @@ def apply_pruning_method(
             target_ratio=target_ratio,
             scope=scope,
             device=device,
-            limit_batches=limit_batches
+            limit_batches=limit_batches,
+            checkpoint_path=checkpoint_path,
         )
         
         return model

@@ -25,6 +25,10 @@ results_debug/
 .vscode/
 .idea/
 
+# Local Claude Code config and generated figures
+.claude/
+figures/
+
 # Ignore all PDFs
 *.pdf
 
