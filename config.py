@@ -9,9 +9,9 @@ METHODS = {
         "ThiNet",      # per-layer sequential scoring (ignores scope anyway)
         "DCP",         # per-layer gradient scoring
         "REPrune",     # ordinal MCP ranks / layer-width → uniform distribution → effectively local
-        "GFS",         # ordinal greedy-selection ranks / layer-width → uniform distribution → effectively local
         "NISP_local",  # NISP importance scoring, per-layer uniform budget allocation
         "AOFP_local",  # AOFP damage-isolation scoring, per-layer uniform budget allocation
+        "GFS",         # ordinal greedy-selection ranks / layer-width → uniform distribution → effectively local
     ],
     "global": [
         "NISP",   # propagated importance + min-max normalisation → genuine non-uniform allocation
