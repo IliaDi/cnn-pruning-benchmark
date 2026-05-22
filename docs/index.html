@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CNN Pruning Benchmark — Interactive Visualisations</title>
+<style>
+  :root {
+    --bg: #FFFAF7;
+    --text: #1A0E10;
+    --muted: #6B5550;
+    --accent: #583722;
+    --accent-bg: #BDD7DE;
+    --border: #D8E6EB;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "DM Sans", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: clamp(3rem, 8vh, 5rem) 1.5rem; }
+  .eyebrow { font-size: 0.82rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); font-weight: 500; margin: 0 0 0.75rem; }
+  h1 { font-family: "Cormorant Garamond", Georgia, serif; font-size: clamp(2.2rem, 5vw, 3rem); font-weight: 300; letter-spacing: -0.02em; margin: 0 0 1rem; line-height: 1.1; }
+  h1 em { font-style: italic; }
+  .lede { font-size: 1.08rem; line-height: 1.7; color: var(--muted); margin: 0 0 2.5rem; }
+  .lede a { color: var(--accent); }
+  .cards { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.85rem; }
+  .cards a {
+    display: block;
+    padding: 1.15rem 1.35rem;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .cards a:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(88, 55, 34, 0.08);
+  }
+  .cards a .t { font-weight: 600; font-size: 1.05rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+  .cards a .t::after { content: "→"; color: var(--accent); transition: transform 0.2s ease; }
+  .cards a:hover .t::after { transform: translateX(3px); }
+  .cards a .d { font-size: 0.95rem; color: var(--muted); margin-top: 0.35rem; }
+  footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--border); font-size: 0.9rem; color: var(--muted); }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+  <main class="wrap">
+    <p class="eyebrow">MSc thesis · Hasselt University</p>
+    <h1>CNN Pruning Benchmark — <em>interactive visualisations</em></h1>
+    <p class="lede">Supplementary interactive visualisations from my thesis on activation-based pruning for VGG-16 / CIFAR-10. Source code on <a href="https://github.com/IliaDi/cnn-pruning-benchmark">GitHub</a>.</p>
+
+    <ul class="cards">
+      <li>
+        <a href="vgg16-architecture/">
+          <div class="t">VGG-16 architecture</div>
+          <div class="d">An interactive walk-through of the network adapted to CIFAR-10 — click any layer to learn what it does.</div>
+        </a>
+      </li>
+      <li>
+        <a href="pruning-methods-explained/">
+          <div class="t">Pruning methods explained</div>
+          <div class="d">Short reference to the twelve activation-based pruning criteria implemented in the benchmark.</div>
+        </a>
+      </li>
+      <li>
+        <a href="pruning-results/">
+          <div class="t">Pruning results</div>
+          <div class="d">Interactive results dashboard — accuracy, FLOPs, and recovery curves across all configurations.</div>
+        </a>
+      </li>
+      <li>
+        <a href="pruning-explorer/">
+          <div class="t">Pruning explorer</div>
+          <div class="d">Per-filter explorer for individual conv layers across all methods and pruning ratios.</div>
+        </a>
+      </li>
+    </ul>
+
+    <footer>
+      <p>Ilia Dioleti · <a href="https://github.com/IliaDi/cnn-pruning-benchmark">github.com/IliaDi/cnn-pruning-benchmark</a> · <a href="https://iliadi.github.io/">portfolio</a></p>
+    </footer>
+  </main>
+</body>
+</html>

@@ -38,3 +38,11 @@ Presentations/
 
 # Quick test (local only, not tracked)
 run_quick_test.py
+
+# Local todo list
+TODO.md
+
+# GitHub Pages site — un-ignore docs/ even though /Visualisations and *.html are blocked above
+!docs/
+!docs/**
+docs/.DS_Store

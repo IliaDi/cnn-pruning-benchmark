@@ -1,0 +1,2073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pruning Methods – How They Work</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0c0e13;
+    --surface: #14171e;
+    --card: #181c26;
+    --border: #1e2230;
+    --border-light: #2a3040;
+    --text: #c8cdd8;
+    --text-dim: #6b7280;
+    --text-bright: #e8ecf4;
+    --blue: #4f8ff7;
+    --cyan: #22d3ee;
+    --violet: #8b5cf6;
+    --amber: #f59e0b;
+    --rose: #f43f5e;
+    --emerald: #10b981;
+    --orange: #f97316;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    min-height: 100vh;
+  }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 40px 28px 60px;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  .header h1 {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text-bright);
+    letter-spacing: -0.5px;
+    margin-bottom: 8px;
+  }
+
+  .header .sub {
+    font-size: 14px;
+    color: var(--text-dim);
+  }
+
+  /* Tab navigation */
+  .tabs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 36px;
+  }
+
+  .tab {
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.2px;
+  }
+
+  .tab:hover {
+    border-color: var(--border-light);
+    color: var(--text);
+  }
+
+  .tab.active {
+    border-color: var(--blue);
+    color: var(--blue);
+    background: #1a2744;
+  }
+
+  /* Method panels */
+  .panel {
+    display: none;
+  }
+
+  .panel.active {
+    display: block;
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .method-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .method-header {
+    padding: 24px 28px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .method-header h2 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-bright);
+    margin-bottom: 4px;
+  }
+
+  .method-header .tagline {
+    font-size: 13px;
+    color: var(--text-dim);
+    font-style: italic;
+  }
+
+  .method-body {
+    padding: 28px;
+  }
+
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 14px;
+  }
+
+  /* Pipeline diagram */
+  .pipeline {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin-bottom: 28px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+
+  .pipe-step {
+    flex: 1;
+    min-width: 140px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    padding: 0 6px;
+  }
+
+  .pipe-num {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+  }
+
+  .pipe-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 12px;
+    text-align: center;
+    width: 100%;
+    flex: 1;
+  }
+
+  .pipe-box .pipe-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 8px;
+  }
+
+  .pipe-box .pipe-desc {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-dim);
+  }
+
+  .pipe-box code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--cyan);
+  }
+
+  .pipe-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    flex-shrink: 0;
+    color: var(--text-dim);
+    opacity: 0.4;
+    font-size: 16px;
+    align-self: center;
+  }
+
+  /* Visual diagram area */
+  .visual {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+
+  .visual-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 16px;
+  }
+
+  /* Filter bar chart */
+  .filter-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 120px;
+    padding: 0 12px;
+    margin-bottom: 8px;
+  }
+
+  .filter-bar-group {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    justify-content: flex-end;
+  }
+
+  .filter-bar {
+    width: 100%;
+    max-width: 36px;
+    border-radius: 4px 4px 0 0;
+    transition: all 0.4s ease;
+    position: relative;
+    min-height: 4px;
+  }
+
+  .filter-bar.pruned {
+    opacity: 0.3;
+    border: 1px dashed var(--rose);
+    background: transparent !important;
+  }
+
+  .filter-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    text-align: center;
+  }
+
+  .filter-label.pruned-label {
+    color: var(--rose);
+  }
+
+  .threshold-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 0 12px;
+  }
+
+  .threshold-line .line {
+    flex: 1;
+    height: 1px;
+    background: var(--rose);
+    opacity: 0.5;
+  }
+
+  .threshold-line .label {
+    font-size: 10px;
+    color: var(--rose);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  /* Explanation text */
+  .explain {
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text);
+    margin-bottom: 14px;
+  }
+
+  .explain:last-child { margin-bottom: 0; }
+
+  .explain strong { color: var(--text-bright); }
+
+  .highlight {
+    display: inline;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+  }
+
+  .hl-keep { background: #10b98120; color: var(--emerald); border: 1px solid #10b98140; }
+  .hl-prune { background: #f43f5e20; color: var(--rose); border: 1px solid #f43f5e40; }
+  .hl-score { background: #4f8ff720; color: var(--blue); border: 1px solid #4f8ff740; }
+
+  /* Code reference box */
+  .code-ref {
+    background: #0c0e1399;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-top: 20px;
+  }
+
+  .code-ref .code-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  .code-ref .code-line {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--cyan);
+  }
+
+  .code-ref .code-comment {
+    color: var(--text-dim);
+  }
+
+  /* Comparison callout */
+  .callout {
+    background: #1a274420;
+    border: 1px solid #2d4a7a40;
+    border-left: 3px solid var(--blue);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    margin-top: 20px;
+  }
+
+  .callout .callout-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--blue);
+    margin-bottom: 6px;
+  }
+
+  .callout p {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-dim);
+  }
+
+  /* Feature map grid */
+  .fmap-grid {
+    display: grid;
+    gap: 8px;
+    margin: 16px 0;
+  }
+
+  .fmap-grid-4 { grid-template-columns: repeat(4, 1fr); }
+  .fmap-grid-8 { grid-template-columns: repeat(8, 1fr); }
+
+  .fmap-cell {
+    aspect-ratio: 1;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    font-weight: 600;
+    border: 1px solid;
+  }
+
+  /* Spatial grid for HRank */
+  .spatial-demo {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .spatial-block {
+    text-align: center;
+  }
+
+  .spatial-block .label {
+    font-size: 10px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+
+  .mini-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 22px);
+    grid-template-rows: repeat(4, 22px);
+    gap: 2px;
+  }
+
+  .mini-cell {
+    border-radius: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 7px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 600;
+  }
+
+  .spatial-arrow {
+    font-size: 20px;
+    color: var(--text-dim);
+    opacity: 0.4;
+  }
+
+  /* Distance matrix for LRMF */
+  .dist-matrix {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 12px auto;
+    width: fit-content;
+  }
+
+  .dist-row {
+    display: flex;
+    gap: 2px;
+  }
+
+  .dist-cell {
+    width: 32px;
+    height: 24px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 8px;
+    font-weight: 600;
+  }
+
+  /* Nuclear norm CHIP demo */
+  .norm-demo {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin: 12px 0;
+  }
+
+  .norm-block {
+    text-align: center;
+    padding: 12px 16px;
+    background: var(--bg);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+
+  .norm-block .val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .norm-block .lbl {
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+
+  .norm-minus {
+    font-size: 24px;
+    color: var(--text-dim);
+  }
+
+  .norm-equals {
+    font-size: 24px;
+    color: var(--text-dim);
+  }
+
+  /* Shared pipeline section */
+  .shared-section {
+    background: #10b98110;
+    border: 1px solid #10b98130;
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-top: 24px;
+  }
+
+  .shared-section .shared-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--emerald);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 10px;
+  }
+
+  .shared-section p {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-dim);
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <h1>Pruning Methods — How They Work</h1>
+    <div class="sub">12 activation-based filter importance criteria applied to VGG-16 / CIFAR-10 (6 local + 6 global)</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('apoz')">APoZ</div>
+    <div class="tab" onclick="switchTab('dropnet')">DropNet</div>
+    <div class="tab" onclick="switchTab('entropy')">Entropy</div>
+    <div class="tab" onclick="switchTab('hrank')">HRank</div>
+    <div class="tab" onclick="switchTab('chip')">CHIP</div>
+    <div class="tab" onclick="switchTab('lrmf')">LRMF</div>
+    <div class="tab" onclick="switchTab('gfs')" style="border-color:var(--violet);color:var(--violet);background:#1e1640">GFS ⬡</div>
+    <div class="tab" onclick="switchTab('nisp')" style="border-color:var(--violet);color:var(--violet);background:#1e1640">NISP ⬡</div>
+    <div class="tab" onclick="switchTab('thinet')" style="border-color:var(--violet);color:var(--violet);background:#1e1640">ThiNet ⬡</div>
+    <div class="tab" onclick="switchTab('aofp')" style="border-color:var(--violet);color:var(--violet);background:#1e1640">AOFP ⬡</div>
+    <div class="tab" onclick="switchTab('dcp')" style="border-color:var(--violet);color:var(--violet);background:#1e1640">DCP ⬡</div>
+    <div class="tab" onclick="switchTab('reprune')" style="border-color:var(--violet);color:var(--violet);background:#1e1640">REPrune ⬡</div>
+  </div>
+
+  <!-- ═══════════════════════ APoZ ═══════════════════════ -->
+  <div class="panel active" id="panel-apoz">
+    <div class="method-card">
+      <div class="method-header">
+        <h2>APoZ — Average Percentage of Zeros</h2>
+        <div class="tagline">Prune filters that are "sleeping" — zero most of the time after ReLU</div>
+      </div>
+      <div class="method-body">
+
+        <div class="section-label" style="color:var(--blue)">Pipeline</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--blue);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--blue)">Hook ReLUs</div>
+              <div class="pipe-desc">Register forward hooks on the ReLU after every Conv2d. We measure <em>post-ReLU</em> activations.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--blue);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--blue)">Count Zeros</div>
+              <div class="pipe-desc">For each filter, count how many activations = 0 across all images and all spatial positions (<code>B × H × W</code>).</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--blue);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--blue)">Compute Score</div>
+              <div class="pipe-desc"><code>APoZ = zeros / total</code><br>Score in [0, 1]. Higher = more dead.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Prune</div>
+              <div class="pipe-desc">Per layer: sort by APoZ descending. Remove the top <code>ratio</code> fraction (highest APoZ = most dead).</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="visual">
+          <div class="visual-title">Example: 8 filters in one conv layer, 50% pruning ratio</div>
+          <div class="filter-bars" id="apoz-bars"></div>
+          <div class="threshold-line">
+            <div class="label">← Keep (low APoZ)</div>
+            <div class="line"></div>
+            <div class="label">Prune (high APoZ) →</div>
+          </div>
+        </div>
+
+        <p class="explain"><strong>What it measures:</strong> The fraction of a filter's post-ReLU activations that are exactly zero. A filter at 0.95 APoZ is "sleeping" 95% of the time — it almost never responds to any input at any spatial position.</p>
+        <p class="explain"><strong>What it misses:</strong> A filter that always outputs the exact same positive value (say 0.8 for every image, every pixel) has 0% zeros — APoZ sees it as perfectly healthy. But it's actually uninformative because it never varies. Entropy catches this case.</p>
+
+        <div class="code-ref">
+          <div class="code-title">In our code (apoz.py)</div>
+          <div class="code-line"><span class="code-comment"># Hook post-ReLU outputs:</span></div>
+          <div class="code-line">zeros_ch = (act == 0).float().sum(dim=(0, 2, 3)) <span class="code-comment"># per-channel</span></div>
+          <div class="code-line">apoz = zeros / total <span class="code-comment"># Eq. 1 from Hu et al.</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ DropNet ═══════════════════════ -->
+  <div class="panel" id="panel-dropnet">
+    <div class="method-card">
+      <div class="method-header">
+        <h2>DropNet — Expected Activation Magnitude</h2>
+        <div class="tagline">Prune filters with the weakest average post-ReLU response</div>
+      </div>
+      <div class="method-body">
+
+        <div class="section-label" style="color:var(--emerald)">Pipeline</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--emerald);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--emerald)">Hook ReLUs</div>
+              <div class="pipe-desc">Same as APoZ — hook the ReLU after each Conv2d to capture post-activation outputs.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--emerald);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--emerald)">Spatial Average</div>
+              <div class="pipe-desc">For each filter, compute <code>mean(|act|)</code> across H×W spatial positions per image.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--emerald);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--emerald)">Average Score</div>
+              <div class="pipe-desc">Average across all calibration images. <code>score = mean over all images</code>. Continuous, not binary.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Prune</div>
+              <div class="pipe-desc">Per layer: remove the <strong>lowest-scoring</strong> filters — weakest average activation.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="visual">
+          <div class="visual-title">Example: 8 filters scored by average activation magnitude</div>
+          <div class="filter-bars" id="dropnet-bars"></div>
+          <div class="threshold-line">
+            <div class="label" style="color:var(--rose)">Prune (low magnitude) ←</div>
+            <div class="line"></div>
+            <div class="label" style="color:var(--emerald)">→ Keep (high magnitude)</div>
+          </div>
+        </div>
+
+        <p class="explain"><strong>What it measures:</strong> How strongly a filter responds on average — a continuous "activation energy" signal. Where APoZ asks "is it zero or not?" (binary), DropNet asks "how strongly does it fire?" (continuous). A filter that outputs 0.01 consistently would score very low even though APoZ might see it as active.</p>
+        <p class="explain"><strong>Key difference from APoZ:</strong> DropNet uses per-layer ranking rather than a global threshold, because activation scales differ massively across VGG-16 layers. Early layers process large spatial maps with small values; deep layers produce small maps with large values.</p>
+
+        <div class="code-ref">
+          <div class="code-title">In our code (dropnet.py)</div>
+          <div class="code-line">gap = act.abs().mean(dim=(2, 3)) <span class="code-comment"># (B, C) — spatial average of |activation|</span></div>
+          <div class="code-line">score[c] = (1/N) * sum(gap[:, c]) <span class="code-comment"># average over all images</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ Entropy ═══════════════════════ -->
+  <div class="panel" id="panel-entropy">
+    <div class="method-card">
+      <div class="method-header">
+        <h2>Entropy — Information Content</h2>
+        <div class="tagline">Prune filters whose responses carry the least variation across the dataset</div>
+      </div>
+      <div class="method-body">
+
+        <div class="section-label" style="color:var(--amber)">Pipeline</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--amber);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--amber)">Hook + GAP</div>
+              <div class="pipe-desc">Hook post-ReLU activations. Apply global average pooling to compress each H×W feature map into <strong>one number</strong>.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--amber);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--amber)">Collect</div>
+              <div class="pipe-desc">Run all calibration images. Each filter now has a <strong>list of N scalars</strong> — one per image. This is the filter's "response profile."</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--amber);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--amber)">Histogram</div>
+              <div class="pipe-desc">Sort those N scalars into <strong>256 bins</strong>. Count how many land in each bin. Normalise to get probabilities.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--amber);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--amber)">Entropy</div>
+              <div class="pipe-desc"><code>H = −Σ p·log(p)</code><br>High H = spread across many bins.<br>Low H = concentrated in few bins.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">5</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Prune</div>
+              <div class="pipe-desc">Remove lowest-entropy filters — they respond the same way to everything.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Step-by-step deep dive ── -->
+        <div class="visual">
+          <div class="visual-title">Step 1 — Why Global Average Pooling (GAP)?</div>
+          <div style="display:flex;gap:16px;align-items:center;justify-content:center;flex-wrap:wrap;margin-bottom:12px;">
+            <div style="text-align:center;">
+              <div style="font-size:10px;font-weight:600;color:var(--text-dim);margin-bottom:6px;">Post-ReLU output for one image</div>
+              <div style="display:grid;grid-template-columns:repeat(4,28px);grid-template-rows:repeat(4,28px);gap:2px;">
+                <div style="background:rgba(245,158,11,0.7);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:#fff">0.9</div>
+                <div style="background:rgba(245,158,11,0.2);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:var(--amber)">0.1</div>
+                <div style="background:rgba(245,158,11,0.5);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:#fff">0.6</div>
+                <div style="background:rgba(245,158,11,0.3);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:var(--amber)">0.2</div>
+                <div style="background:rgba(245,158,11,0.4);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:var(--amber)">0.3</div>
+                <div style="background:rgba(245,158,11,0.8);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:#fff">0.8</div>
+                <div style="background:rgba(245,158,11,0.1);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:var(--amber)">0.0</div>
+                <div style="background:rgba(245,158,11,0.6);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:#fff">0.5</div>
+                <div style="background:rgba(245,158,11,0.5);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:#fff">0.4</div>
+                <div style="background:rgba(245,158,11,0.3);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:var(--amber)">0.2</div>
+                <div style="background:rgba(245,158,11,0.7);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:#fff">0.7</div>
+                <div style="background:rgba(245,158,11,0.1);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:var(--amber)">0.1</div>
+                <div style="background:rgba(245,158,11,0.6);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:#fff">0.6</div>
+                <div style="background:rgba(245,158,11,0.4);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:var(--amber)">0.3</div>
+                <div style="background:rgba(245,158,11,0.8);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:#fff">0.9</div>
+                <div style="background:rgba(245,158,11,0.5);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:8px;font-family:'IBM Plex Mono',monospace;color:#fff">0.4</div>
+              </div>
+              <div style="font-size:9px;color:var(--text-dim);margin-top:4px;font-family:'IBM Plex Mono',monospace">H × W = 224 × 224 values</div>
+            </div>
+            <div style="font-size:20px;color:var(--text-dim);opacity:0.4;">→</div>
+            <div style="text-align:center;">
+              <div style="font-size:10px;font-weight:600;color:var(--text-dim);margin-bottom:6px;">After GAP: mean(H,W)</div>
+              <div style="width:56px;height:56px;border-radius:8px;background:rgba(245,158,11,0.45);border:2px solid var(--amber);display:flex;align-items:center;justify-content:center;font-size:16px;font-family:'IBM Plex Mono',monospace;font-weight:700;color:#fff;margin:0 auto">0.44</div>
+              <div style="font-size:9px;color:var(--text-dim);margin-top:4px;font-family:'IBM Plex Mono',monospace">1 scalar for this image</div>
+            </div>
+          </div>
+          <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-top:12px;"><strong style="color:var(--text-bright)">Why?</strong> A single feature map has 224×224 = 50,176 values. We can't directly measure the "variation" of 50,176 numbers across thousands of images — that's millions of data points per filter. GAP compresses each feature map down to one number: the average activation across all spatial positions. This gives us one clean scalar per image that summarises "how strongly did this filter respond overall to this image?" Now we can ask: does that summary number <em>change</em> between different images, or does it stay the same?</p>
+        </div>
+
+        <div class="visual">
+          <div class="visual-title">Steps 2–3 — The Histogram: turning N scalars into a probability distribution</div>
+          <div style="display:flex;gap:32px;flex-wrap:wrap;justify-content:center;align-items:flex-start;">
+            <!-- Filter A: spread -->
+            <div style="flex:1;min-width:220px;max-width:340px;">
+              <div style="font-size:11px;font-weight:700;color:var(--emerald);margin-bottom:10px;text-align:center;">FILTER A — Varied responses</div>
+              <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;text-align:center;">GAP scalars across 10,000 images:</div>
+              <div style="display:flex;gap:3px;justify-content:center;margin-bottom:4px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-dim)">0.12, 0.87, 0.34, 0.61, 0.03, 0.95, 0.48, 0.72 …</div>
+              <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;text-align:center;">↓ sort into 256 bins ↓</div>
+              <div style="display:flex;align-items:flex-end;gap:1px;height:60px;justify-content:center;">
+                <div style="width:4px;height:20%;background:var(--emerald);border-radius:1px;opacity:0.6"></div>
+                <div style="width:4px;height:35%;background:var(--emerald);border-radius:1px;opacity:0.6"></div>
+                <div style="width:4px;height:50%;background:var(--emerald);border-radius:1px;opacity:0.6"></div>
+                <div style="width:4px;height:60%;background:var(--emerald);border-radius:1px;opacity:0.7"></div>
+                <div style="width:4px;height:70%;background:var(--emerald);border-radius:1px;opacity:0.7"></div>
+                <div style="width:4px;height:80%;background:var(--emerald);border-radius:1px;opacity:0.8"></div>
+                <div style="width:4px;height:95%;background:var(--emerald);border-radius:1px;opacity:0.8"></div>
+                <div style="width:4px;height:100%;background:var(--emerald);border-radius:1px;opacity:0.9"></div>
+                <div style="width:4px;height:90%;background:var(--emerald);border-radius:1px;opacity:0.8"></div>
+                <div style="width:4px;height:85%;background:var(--emerald);border-radius:1px;opacity:0.8"></div>
+                <div style="width:4px;height:75%;background:var(--emerald);border-radius:1px;opacity:0.7"></div>
+                <div style="width:4px;height:65%;background:var(--emerald);border-radius:1px;opacity:0.7"></div>
+                <div style="width:4px;height:55%;background:var(--emerald);border-radius:1px;opacity:0.6"></div>
+                <div style="width:4px;height:40%;background:var(--emerald);border-radius:1px;opacity:0.6"></div>
+                <div style="width:4px;height:30%;background:var(--emerald);border-radius:1px;opacity:0.5"></div>
+                <div style="width:4px;height:15%;background:var(--emerald);border-radius:1px;opacity:0.5"></div>
+              </div>
+              <div style="font-size:9px;color:var(--text-dim);text-align:center;margin-top:4px;font-family:'IBM Plex Mono',monospace">bin 0 ··················· bin 255</div>
+              <div style="font-size:11px;text-align:center;margin-top:8px;color:var(--emerald);font-weight:700">Many bins occupied → spread-out probabilities → HIGH entropy</div>
+            </div>
+            <!-- Filter B: concentrated -->
+            <div style="flex:1;min-width:220px;max-width:340px;">
+              <div style="font-size:11px;font-weight:700;color:var(--rose);margin-bottom:10px;text-align:center;">FILTER B — Constant response</div>
+              <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;text-align:center;">GAP scalars across 10,000 images:</div>
+              <div style="display:flex;gap:3px;justify-content:center;margin-bottom:4px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-dim)">0.80, 0.81, 0.80, 0.79, 0.80, 0.81, 0.80, 0.80 …</div>
+              <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;text-align:center;">↓ sort into 256 bins ↓</div>
+              <div style="display:flex;align-items:flex-end;gap:1px;height:60px;justify-content:center;">
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:100%;background:var(--rose);border-radius:1px;opacity:0.9"></div>
+                <div style="width:4px;height:15%;background:var(--rose);border-radius:1px;opacity:0.3"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+                <div style="width:4px;height:2%;background:var(--rose);border-radius:1px;opacity:0.2"></div>
+              </div>
+              <div style="font-size:9px;color:var(--text-dim);text-align:center;margin-top:4px;font-family:'IBM Plex Mono',monospace">bin 0 ··················· bin 255</div>
+              <div style="font-size:11px;text-align:center;margin-top:8px;color:var(--rose);font-weight:700">One tall spike → one probability ≈ 1.0 → LOW entropy</div>
+            </div>
+          </div>
+          <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-top:16px;"><strong style="color:var(--text-bright)">Why a histogram?</strong> Shannon entropy is defined over a probability distribution — it needs probabilities, not raw numbers. But we have a list of continuous-valued scalars (like 0.44, 0.67, 0.12…), not discrete events. The histogram converts these continuous values into a discrete distribution: divide the range into 256 equally-spaced buckets, count how many values fall into each bucket, and divide by the total count. Now each bucket has a probability p<sub>i</sub>, and we can apply the entropy formula.</p>
+          <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-top:10px;"><strong style="color:var(--text-bright)">Why 256 bins?</strong> The paper doesn't specify an exact number. 256 is a standard default — enough granularity to distinguish genuinely different response patterns, but not so many bins that most are empty (which would make the estimate noisy). With ~10,000 calibration images, 256 bins gives roughly 40 samples per bin on average, which is enough for a stable estimate. Using 64 or 512 would work too — the ranking between filters is robust to the exact bin count.</p>
+        </div>
+
+        <div class="visual">
+          <div class="visual-title">Step 4 — Shannon Entropy: quantifying spread</div>
+          <div style="display:flex;gap:20px;flex-wrap:wrap;justify-content:center;align-items:center;margin-bottom:14px;">
+            <div style="text-align:center;padding:14px 20px;background:var(--bg);border-radius:8px;border:1px solid var(--border);">
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;color:var(--cyan);margin-bottom:6px">H = −Σ p<sub>i</sub> · log(p<sub>i</sub>)</div>
+              <div style="font-size:11px;color:var(--text-dim)">Sum over all non-empty bins</div>
+            </div>
+          </div>
+          <p style="font-size:13px;line-height:1.6;color:var(--text-dim);">The formula simply measures <strong style="color:var(--text-bright)">how spread out the probabilities are</strong> across the bins. If values are evenly distributed (many bins with similar small probabilities), the log terms produce a large negative sum — high entropy. If almost all probability is concentrated in one or two bins, the sum is small — low entropy.</p>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-top:14px;">
+            <div style="background:var(--bg);border:1px solid #10b98140;border-radius:8px;padding:12px 16px;text-align:center;min-width:140px;">
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:var(--emerald)">H = 4.8</div>
+              <div style="font-size:10px;color:var(--text-dim);margin-top:4px">Filter A: varied<br>Responds differently<br>to different images</div>
+              <div style="font-size:11px;color:var(--emerald);font-weight:700;margin-top:6px">→ KEEP</div>
+            </div>
+            <div style="background:var(--bg);border:1px solid #f43f5e40;border-radius:8px;padding:12px 16px;text-align:center;min-width:140px;">
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:var(--rose)">H = 0.3</div>
+              <div style="font-size:10px;color:var(--text-dim);margin-top:4px">Filter B: constant<br>Says the same thing<br>regardless of input</div>
+              <div style="font-size:11px;color:var(--rose);font-weight:700;margin-top:6px">→ PRUNE</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <div class="callout-title">What entropy catches that APoZ and DropNet miss</div>
+          <p>Filter B outputs 0.80 for every image. APoZ sees 0% zeros — it thinks the filter is perfectly healthy. DropNet sees a strong average magnitude — it also thinks the filter is important. But it carries <strong>zero useful information</strong> because it never varies. It's like a smoke detector that always reads "medium" regardless of whether there's smoke or not. Entropy correctly flags it because all 10,000 scalars land in the same histogram bin, giving near-zero entropy.</p>
+        </div>
+
+        <div class="code-ref">
+          <div class="code-title">In our code (entropy.py)</div>
+          <div class="code-line"><span class="code-comment"># Step 1: GAP — compress H×W feature map to one scalar per image</span></div>
+          <div class="code-line">gap = output.mean(dim=(2, 3)).cpu() <span class="code-comment"># (B, C) → one value per filter per image</span></div>
+          <div class="code-line">&nbsp;</div>
+          <div class="code-line"><span class="code-comment"># Step 3: Histogram — estimate probability distribution from N scalars</span></div>
+          <div class="code-line">counts, _ = np.histogram(values, bins=256)</div>
+          <div class="code-line">probs = counts / counts.sum() <span class="code-comment"># normalise to probabilities</span></div>
+          <div class="code-line">probs = probs[probs > 0] <span class="code-comment"># drop empty bins (0·log0 = 0)</span></div>
+          <div class="code-line">&nbsp;</div>
+          <div class="code-line"><span class="code-comment"># Step 4: Shannon entropy — Eq. 1 from Luo & Wu (2017)</span></div>
+          <div class="code-line">H = -np.sum(probs * np.log(probs)) <span class="code-comment"># high H = informative, low H = prune</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ HRank ═══════════════════════ -->
+  <div class="panel" id="panel-hrank">
+    <div class="method-card">
+      <div class="method-header">
+        <h2>HRank — Feature Map Rank</h2>
+        <div class="tagline">Prune filters that produce spatially repetitive feature maps</div>
+      </div>
+      <div class="method-body">
+
+        <div class="section-label" style="color:var(--violet)">Pipeline</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Collect Maps</div>
+              <div class="pipe-desc">For each filter, collect the H×W <strong>post-ReLU</strong> feature map it produces for each calibration image.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">SVD → Rank</div>
+              <div class="pipe-desc">Compute the matrix rank of each H×W map using SVD. This counts linearly independent rows.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Average</div>
+              <div class="pipe-desc">Average the rank across all calibration images. Stable even with small batches (paper Fig. 2).</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Prune</div>
+              <div class="pipe-desc">Remove lowest-rank filters — they produce the most spatially repetitive output.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="visual">
+          <div class="visual-title">What "rank" means for a feature map</div>
+          <div class="spatial-demo">
+            <div class="spatial-block">
+              <div class="label" style="color:var(--rose)">Rank 1 — Repetitive</div>
+              <div class="mini-grid" id="rank1-grid"></div>
+              <div style="font-size:10px;color:var(--rose);margin-top:6px">Every row is a copy → PRUNE</div>
+            </div>
+            <div class="spatial-block">
+              <div class="label" style="color:var(--amber)">Rank 2 — Moderate</div>
+              <div class="mini-grid" id="rank2-grid"></div>
+              <div style="font-size:10px;color:var(--amber);margin-top:6px">Two distinct patterns</div>
+            </div>
+            <div class="spatial-block">
+              <div class="label" style="color:var(--emerald)">Rank 4 — Rich</div>
+              <div class="mini-grid" id="rank4-grid"></div>
+              <div style="font-size:10px;color:var(--emerald);margin-top:6px">Every row unique → KEEP</div>
+            </div>
+          </div>
+        </div>
+
+        <p class="explain"><strong>What it measures:</strong> The spatial complexity of a filter's output. A rank-1 feature map means every row is a scaled copy of the same pattern — the filter detects something, but it's saying the same thing everywhere. A high-rank map has diverse structure at different positions.</p>
+        <p class="explain"><strong>What it misses:</strong> Each filter is judged <strong>in isolation</strong>. A filter could produce a rich, high-rank feature map, but if three other filters in the same layer produce the exact same map, it's still redundant. HRank wouldn't notice that duplication — CHIP would.</p>
+
+        <div class="code-ref">
+          <div class="code-title">In our code (hrank.py)</div>
+          <div class="code-line"><span class="code-comment"># Hook the ReLU *after* each Conv2d (post-ReLU is essential for rank differentiation)</span></div>
+          <div class="code-line">rank = torch.linalg.matrix_rank(fmap_2d.float())</div>
+          <div class="code-line">rank_sum[c] += rank <span class="code-comment"># accumulate over images</span></div>
+          <div class="code-line">score[c] = rank_sum[c] / num_images <span class="code-comment"># average rank</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ CHIP ═══════════════════════ -->
+  <div class="panel" id="panel-chip">
+    <div class="method-card">
+      <div class="method-header">
+        <h2>CHIP — Channel Independence</h2>
+        <div class="tagline">Prune filters whose output can be predicted from the other filters in the same layer</div>
+      </div>
+      <div class="method-body">
+
+        <div class="section-label" style="color:var(--orange)">Pipeline</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--orange);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--orange)">Collect + Pool</div>
+              <div class="pipe-desc">Hook post-ReLU maps. <strong>Pool to 8×8</strong> (our 224→8 adaptation). Build matrix <code>A ∈ R^{C×64}</code>.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--orange);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--orange)">Nuclear Norm</div>
+              <div class="pipe-desc">Compute <code>||A||*</code> (sum of singular values) for the full matrix. This is the baseline.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--orange);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--orange)">Zero Each Row</div>
+              <div class="pipe-desc">For each channel i: zero out row i, recompute <code>||A_masked||*</code>. CI = drop in norm.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Prune</div>
+              <div class="pipe-desc">Lowest CI = most redundant = can be reconstructed from neighbours → prune.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="visual">
+          <div class="visual-title">Channel Independence: "How much does this row matter?"</div>
+          <div class="norm-demo">
+            <div class="norm-block">
+              <div class="val" style="color:var(--cyan)">42.7</div>
+              <div class="lbl">||A||* full matrix</div>
+            </div>
+            <div class="norm-minus">−</div>
+            <div class="norm-block">
+              <div class="val" style="color:var(--amber)">41.9</div>
+              <div class="lbl">||A_masked||* (row i zeroed)</div>
+            </div>
+            <div class="norm-equals">=</div>
+            <div class="norm-block">
+              <div class="val" style="color:var(--rose)">0.8</div>
+              <div class="lbl">CI score (small → prune)</div>
+            </div>
+          </div>
+          <p style="text-align:center;font-size:12px;color:var(--text-dim);margin-top:12px;">Small CI = removing this channel barely changes what the layer can express → <span style="color:var(--rose)">redundant</span></p>
+          <p style="text-align:center;font-size:12px;color:var(--text-dim);margin-top:4px;">Large CI = this channel carries unique information the others can't replace → <span style="color:var(--emerald)">keep</span></p>
+        </div>
+
+        <p class="explain"><strong>What it measures:</strong> Whether a filter is telling the layer something <em>new</em>. Unlike HRank (which judges each filter alone), CHIP looks at all filters <em>together</em> and asks: "If I remove this one, can the remaining filters reconstruct what it was saying?" If yes, it's redundant.</p>
+        <p class="explain"><strong>Our 8×8 pooling adaptation:</strong> At 224×224 input, the first conv produces a 64×50,176 matrix — running 65 SVDs per image is far too slow. We pool to 8×8 first (64×64 matrix), which is ~780× faster and preserves inter-channel relationships. This matches the scale the original paper operated at with 32×32 CIFAR-10.</p>
+
+        <div class="callout">
+          <div class="callout-title">CHIP vs HRank</div>
+          <p>HRank can miss a filter that's individually complex but <strong>duplicated</strong> across the layer. CHIP catches this overlap. Conversely, CHIP can miss a filter that's spatially simplistic but happens to be the <strong>only one</strong> capturing that signal. They find different kinds of waste.</p>
+        </div>
+
+        <div class="code-ref">
+          <div class="code-title">In our code (chip.py)</div>
+          <div class="code-line">pooled = F.adaptive_avg_pool2d(maps, 8) <span class="code-comment"># 224→8 adaptation</span></div>
+          <div class="code-line">A = feature_maps.reshape(C, H*W).float()</div>
+          <div class="code-line">original_norm = svdvals(A).sum() <span class="code-comment"># nuclear norm</span></div>
+          <div class="code-line">A_masked[i, :] = 0.0 <span class="code-comment"># zero out channel i</span></div>
+          <div class="code-line">ci[i] = original_norm - svdvals(A_masked).sum() <span class="code-comment"># Eq. 3</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ LRMF ═══════════════════════ -->
+  <div class="panel" id="panel-lrmf">
+    <div class="method-card">
+      <div class="method-header">
+        <h2>LRMF — Learned Representation Median in Frequency Domain</h2>
+        <div class="tagline">Prune filters that look most similar to their neighbours — in the frequency domain</div>
+      </div>
+      <div class="method-body">
+
+        <div class="section-label" style="color:var(--cyan)">Pipeline</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--cyan);color:#000">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--cyan)">Hook Conv2d — per batch, per image</div>
+              <div class="pipe-desc">Hook the <strong>raw Conv2d output</strong> directly — pre-ReLU. For each batch → for each image in the batch: collect C feature maps of shape H×W (one per filter).</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--cyan);color:#000">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--cyan)">2D DCT</div>
+              <div class="pipe-desc">Transform each feature map into the frequency domain using a 2D Discrete Cosine Transform.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--cyan);color:#000">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--cyan)">Low-Freq Crop</div>
+              <div class="pipe-desc">Keep only the <strong>top-left quarter</strong> of the DCT matrix. Flatten it into a compact descriptor per filter.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--cyan);color:#000">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--cyan)">Distance Matrix — per image, accumulated</div>
+              <div class="pipe-desc">Per image: compute C×C pairwise Euclidean distances between descriptors; add each filter's row-sum to a running total. After all batches: divide by number of batches (not number of images).</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">5</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Prune</div>
+              <div class="pipe-desc">Lowest row-sum = the "median" filter, most surrounded by similar neighbours → prune.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Pre-ReLU callout ── -->
+        <div class="callout" style="border-left-color:var(--cyan);background:#22d3ee08;border-color:#22d3ee30;">
+          <div class="callout-title" style="color:var(--cyan)">Pre-ReLU hooking — why LRMF (and HRank) are different</div>
+          <p>APoZ, DropNet, Entropy, and CHIP all hook the <strong>ReLU after each Conv2d</strong> — they need post-activation values because their criteria depend on ReLU behaviour (zero-counting, activation magnitude, etc.).</p>
+          <p style="margin-top:8px">LRMF hooks the <strong>Conv2d output directly</strong> (before ReLU), matching the original paper's repo which captures <code>output.data</code> from the conv layer. This is because LRMF compares the <em>shape and structure</em> of feature maps via DCT, not their activation statistics. ReLU would clip all negative values to zero, distorting the frequency-domain representation. The raw conv output preserves the full signal — including negative values — which gives a more faithful frequency fingerprint.</p>
+          <p style="margin-top:8px">HRank also hooks pre-ReLU for a similar reason: matrix rank measures spatial structure, and ReLU doesn't systematically change rank. So in our codebase, <strong>4 methods are post-ReLU</strong> (APoZ, DropNet, Entropy, CHIP) and <strong>2 are pre-ReLU</strong> (HRank, LRMF).</p>
+        </div>
+
+        <!-- ── Spatial vs Frequency ── -->
+        <div class="visual" style="margin-top:24px;">
+          <div class="visual-title">Why frequency domain? Shifted copies become identical</div>
+          <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;align-items:center;margin-bottom:14px">
+            <div style="text-align:center;">
+              <div style="font-size:10px;font-weight:600;color:var(--text-dim);margin-bottom:8px">SPATIAL DOMAIN</div>
+              <div style="display:flex;gap:10px">
+                <div>
+                  <div style="width:52px;height:52px;border-radius:6px;background:linear-gradient(135deg,#4f8ff7 0%,#0c0e13 100%);border:1px solid var(--border)"></div>
+                  <div style="font-size:8px;color:var(--text-dim);margin-top:3px;text-align:center">edge top-left</div>
+                </div>
+                <div>
+                  <div style="width:52px;height:52px;border-radius:6px;background:linear-gradient(135deg,#0c0e13 30%,#4f8ff7 100%);border:1px solid var(--border)"></div>
+                  <div style="font-size:8px;color:var(--text-dim);margin-top:3px;text-align:center">edge bottom-right</div>
+                </div>
+              </div>
+              <div style="font-size:10px;color:var(--amber);margin-top:8px;font-weight:600">Euclidean distance: LARGE</div>
+              <div style="font-size:9px;color:var(--text-dim)">Pixel values are in different positions</div>
+            </div>
+            <div style="font-size:20px;color:var(--text-dim);opacity:0.4">→ DCT →</div>
+            <div style="text-align:center;">
+              <div style="font-size:10px;font-weight:600;color:var(--text-dim);margin-bottom:8px">FREQUENCY DOMAIN</div>
+              <div style="display:flex;gap:10px">
+                <div>
+                  <div style="width:52px;height:52px;border-radius:6px;background:var(--cyan);opacity:0.5;border:1px solid var(--cyan)"></div>
+                  <div style="font-size:8px;color:var(--text-dim);margin-top:3px;text-align:center">same gradient</div>
+                </div>
+                <div>
+                  <div style="width:52px;height:52px;border-radius:6px;background:var(--cyan);opacity:0.48;border:1px solid var(--cyan)"></div>
+                  <div style="font-size:8px;color:var(--text-dim);margin-top:3px;text-align:center">same gradient</div>
+                </div>
+              </div>
+              <div style="font-size:10px;color:var(--cyan);margin-top:8px;font-weight:600">Euclidean distance: TINY</div>
+              <div style="font-size:9px;color:var(--text-dim)">Same frequency content, position is gone</div>
+            </div>
+          </div>
+          <p style="font-size:13px;line-height:1.6;color:var(--text-dim)">Both feature maps contain the same gradient — one is just shifted. In the spatial domain, their pixel values are in completely different positions, so a direct distance comparison says "these are very different." But DCT decomposes the image into frequency components (how much of each wave pattern is present), and shifting an image doesn't change its frequency content — only its phase. Since LRMF compares frequency <em>magnitudes</em>, the two maps become nearly identical. This reveals redundancy that spatial-domain comparisons would completely miss.</p>
+        </div>
+
+        <!-- ── Low-frequency crop ── -->
+        <div class="visual">
+          <div class="visual-title">Why only the low-frequency quarter?</div>
+          <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;align-items:flex-start;">
+            <div style="text-align:center;flex:1;min-width:200px">
+              <div style="font-size:10px;font-weight:600;color:var(--text-dim);margin-bottom:8px">Full DCT matrix</div>
+              <div style="width:100px;height:100px;border-radius:6px;border:1px solid var(--border);margin:0 auto;position:relative;overflow:hidden;background:var(--bg)">
+                <div style="position:absolute;top:0;left:0;width:50px;height:50px;background:linear-gradient(135deg,rgba(34,211,238,0.6),rgba(34,211,238,0.15));border-right:2px dashed var(--cyan);border-bottom:2px dashed var(--cyan)"></div>
+                <div style="position:absolute;top:52px;left:0;width:50px;height:48px;background:rgba(107,114,128,0.08)"></div>
+                <div style="position:absolute;top:0;left:52px;width:48px;height:50px;background:rgba(107,114,128,0.08)"></div>
+                <div style="position:absolute;top:52px;left:52px;width:48px;height:48px;background:rgba(107,114,128,0.04)"></div>
+                <div style="position:absolute;top:8px;left:8px;font-size:8px;font-weight:700;color:var(--cyan)">LOW</div>
+                <div style="position:absolute;top:8px;right:8px;font-size:7px;color:var(--text-dim)">mid</div>
+                <div style="position:absolute;bottom:8px;left:8px;font-size:7px;color:var(--text-dim)">mid</div>
+                <div style="position:absolute;bottom:8px;right:6px;font-size:7px;color:var(--text-dim)">high</div>
+              </div>
+              <div style="font-size:9px;color:var(--text-dim);margin-top:6px">Top-left = low freq (broad structure)<br>Bottom-right = high freq (fine detail/noise)</div>
+            </div>
+            <div style="flex:2;min-width:280px">
+              <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-bottom:10px"><strong style="color:var(--text-bright)">DCT organises information by frequency.</strong> The top-left corner of the DCT matrix holds the low-frequency components — these describe the broad structure of the feature map (overall gradients, large blobs, dominant patterns). The bottom-right holds high-frequency components — fine-grained detail, sharp edges, pixel-level noise.</p>
+              <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-bottom:10px"><strong style="color:var(--text-bright)">Most energy lives in the low frequencies.</strong> This is a well-known property of natural images (and it's why JPEG compression works). For feature maps, the same applies: the broad structure carries the meaningful signal, while high-frequency detail is mostly noise or spatial jitter that varies between images.</p>
+              <p style="font-size:13px;line-height:1.6;color:var(--text-dim)"><strong style="color:var(--text-bright)">Cropping to ¼ serves two purposes:</strong> it removes noise that would make distances between similar filters appear larger than they really are (making redundancy harder to detect), and it dramatically reduces the descriptor size. For a 224×224 feature map, the full DCT has 50,176 values per filter; the cropped quarter has only <code>ceil(224/4)² = 56² = 3,136</code> values — a compact fingerprint that captures the essence of each filter's output.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Distance matrix ── -->
+        <div class="visual">
+          <div class="visual-title">The distance matrix: finding the "median" filter</div>
+          <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-bottom:14px">After DCT + cropping, each filter has a compact frequency descriptor (a flattened vector). Now we measure how far apart every pair of filters is:</p>
+          <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;align-items:flex-start">
+            <!-- Mini distance matrix -->
+            <div style="text-align:center;">
+              <div style="font-size:10px;font-weight:600;color:var(--text-dim);margin-bottom:8px">Distance matrix D (5 filters example)</div>
+              <div style="display:flex;flex-direction:column;gap:2px;margin:0 auto;width:fit-content">
+                <div style="display:flex;gap:2px">
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(107,114,128,0.15);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--text-dim)">—</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.25);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--emerald)">8.2</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.5);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:#fff">14.1</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.35);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--emerald)">9.7</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.6);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:#fff">16.3</div>
+                  <div style="width:10px"></div>
+                  <div style="width:46px;height:26px;border-radius:3px;background:rgba(16,185,129,0.2);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;color:var(--emerald)">48.3</div>
+                </div>
+                <div style="display:flex;gap:2px">
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(244,63,94,0.15);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--rose)">8.2</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(107,114,128,0.15);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--text-dim)">—</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(244,63,94,0.15);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--rose)">3.4</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(244,63,94,0.15);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--rose)">2.1</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(244,63,94,0.2);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--rose)">7.5</div>
+                  <div style="width:10px"></div>
+                  <div style="width:46px;height:26px;border-radius:3px;background:rgba(244,63,94,0.25);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;color:var(--rose)">21.2</div>
+                </div>
+                <div style="display:flex;gap:2px">
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.5);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:#fff">14.1</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.15);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--emerald)">3.4</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(107,114,128,0.15);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--text-dim)">—</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.3);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--emerald)">11.0</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.55);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:#fff">15.8</div>
+                  <div style="width:10px"></div>
+                  <div style="width:46px;height:26px;border-radius:3px;background:rgba(16,185,129,0.2);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;color:var(--emerald)">44.3</div>
+                </div>
+                <div style="display:flex;gap:2px">
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(244,63,94,0.2);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--rose)">9.7</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(244,63,94,0.1);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--rose)">2.1</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(244,63,94,0.25);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--rose)">11.0</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(107,114,128,0.15);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--text-dim)">—</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(244,63,94,0.15);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--rose)">5.9</div>
+                  <div style="width:10px"></div>
+                  <div style="width:46px;height:26px;border-radius:3px;background:rgba(244,63,94,0.2);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;color:var(--rose)">28.7</div>
+                </div>
+                <div style="display:flex;gap:2px">
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.6);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:#fff">16.3</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.25);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--emerald)">7.5</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.55);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:#fff">15.8</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(16,185,129,0.2);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--emerald)">5.9</div>
+                  <div style="width:38px;height:26px;border-radius:3px;background:rgba(107,114,128,0.15);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:8px;color:var(--text-dim)">—</div>
+                  <div style="width:10px"></div>
+                  <div style="width:46px;height:26px;border-radius:3px;background:rgba(16,185,129,0.25);display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:700;color:var(--emerald)">45.5</div>
+                </div>
+              </div>
+              <div style="display:flex;justify-content:space-between;margin-top:6px;padding:0 2px;">
+                <div style="font-size:8px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace">F1 &nbsp; F2 &nbsp; F3 &nbsp; F4 &nbsp; F5</div>
+                <div style="font-size:8px;color:var(--text-dim);font-family:'IBM Plex Mono',monospace">Σ row</div>
+              </div>
+            </div>
+            <!-- Explanation -->
+            <div style="flex:1;min-width:240px;">
+              <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-bottom:12px"><strong style="color:var(--text-bright)">Each cell D[i][j]</strong> is the Euclidean distance between filter i's DCT descriptor and filter j's. A small distance means those two filters produce similar frequency patterns — they're redundant.</p>
+              <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-bottom:12px"><strong style="color:var(--text-bright)">The row-sum</strong> is each filter's total distance to <em>all</em> other filters. A filter with a small row-sum sits in the <strong>middle of a cluster</strong> — it's close to many neighbours who are producing similar things. That's the "representation median."</p>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+                <div style="background:var(--bg);border:1px solid #f43f5e30;border-radius:6px;padding:8px 12px;text-align:center;flex:1;min-width:100px">
+                  <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;color:var(--rose)">F2: 21.2</div>
+                  <div style="font-size:9px;color:var(--text-dim);margin-top:3px">Lowest sum — closest<br>to everything → <strong style="color:var(--rose)">PRUNE</strong></div>
+                </div>
+                <div style="background:var(--bg);border:1px solid #10b98130;border-radius:6px;padding:8px 12px;text-align:center;flex:1;min-width:100px">
+                  <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;color:var(--emerald)">F1: 48.3</div>
+                  <div style="font-size:9px;color:var(--text-dim);margin-top:3px">Highest sum — far from<br>everything → <strong style="color:var(--emerald)">KEEP</strong></div>
+                </div>
+              </div>
+              <p style="font-size:12px;line-height:1.5;color:var(--text-dim);margin-top:12px">F2 has small distances to F1, F3, F4, and F5 — it sits in the center of the pack. Its contribution is already well-covered by surrounding filters. F1 is the outlier — far from everything else — meaning it captures something unique that no other filter covers.</p>
+            </div>
+          </div>
+          <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-top:14px">This is computed <strong>per image</strong>; row-sums are summed across all images within each batch, then accumulated across all batches, then divided by the <em>number of batches</em> (not the number of images — matching the original paper's implementation). This means the final score scales with batch size, but relative rankings between filters are preserved regardless.</p>
+        </div>
+
+        <div class="code-ref">
+          <div class="code-title">In our code (lrmf.py)</div>
+          <div class="code-line"><span class="code-comment"># Step 1: Hook raw Conv2d output (pre-ReLU, matches paper repo)</span></div>
+          <div class="code-line">module.register_forward_hook(_make_hook(name)) <span class="code-comment"># on nn.Conv2d directly</span></div>
+          <div class="code-line">&nbsp;</div>
+          <div class="code-line"><span class="code-comment"># Step 2–3: DCT + low-frequency crop</span></div>
+          <div class="code-line">dct_full = dctn(fm_sq, type=2) <span class="code-comment"># 2D DCT (paper Eq. 5)</span></div>
+          <div class="code-line">fd[c] = dct_full[:a, :a].ravel() <span class="code-comment"># a = ceil(side/4), top-left quarter</span></div>
+          <div class="code-line">&nbsp;</div>
+          <div class="code-line"><span class="code-comment"># Step 4: Pairwise distance matrix + row-sum score</span></div>
+          <div class="code-line">dist_mat = cdist(fd, fd, 'euclidean') <span class="code-comment"># C×C matrix (paper Eq. 8)</span></div>
+          <div class="code-line">score = dist_mat.sum(axis=1) <span class="code-comment"># row-sum: low = median = prune</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ GFS ═══════════════════════ -->
+  <div class="panel" id="panel-gfs">
+    <div class="method-card" style="border-color:#8b5cf640">
+      <div class="method-header">
+        <h2>GFS — Greedy Forward Selection <span style="font-size:12px;font-weight:400;color:#14b8a6;background:#14b8a620;padding:2px 8px;border-radius:4px;margin-left:8px;">LOCAL*</span></h2>
+        <div class="tagline">Build a subnetwork by greedily adding the most valuable filters — starting from nothing</div>
+      </div>
+      <div class="method-body">
+
+        <div class="section-label" style="color:var(--violet)">Key Insight: Forward Selection ≠ Backward Elimination</div>
+        <p class="explain">Most pruning methods <strong>remove</strong> filters from a full network (backward elimination). GFS does the opposite: it starts with an <strong>empty</strong> layer and greedily <strong>adds</strong> the filter that most reduces the loss. This is provably better — the paper shows forward selection achieves O(1/n²) loss for n selected filters, while backward elimination has no such guarantee.</p>
+
+        <div class="section-label" style="color:var(--violet);margin-top:24px">Paper pipeline — GLOBAL (cross-layer budget, per-layer sequential scoring)</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Empty Layer</div>
+              <div class="pipe-desc">Start with set S = ∅. All filters in the layer are candidates. Zero the entire layer's output.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Try Each — per layer, all images at once</div>
+              <div class="pipe-desc">For each candidate: zero all weights in the layer except S ∪ {k}, scale by N<sub>h</sub>/|S ∪ {k}|, forward <strong>up to 256 images</strong> through the <strong>full model</strong> (not just this layer), compute cross-entropy at the final classifier. At each greedy step only <strong>up to 20 random candidates</strong> are tried — not all remaining filters. Data pre-collected once, reused every step.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Add Best</div>
+              <div class="pipe-desc">Pick k* = argmin loss. Add it: S ← S ∪ {k*}. Scale output by N<sub>h</sub>/|S| to match magnitude.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--emerald);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--emerald)">Repeat</div>
+              <div class="pipe-desc">Repeat steps 2–3 until |S| = n<sub>keep</sub> filters. Earlier selections get higher importance scores.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="visual">
+          <div class="visual-title">Forward selection: building up a subnetwork step by step</div>
+          <div style="display:flex;flex-direction:column;gap:12px;font-family:'IBM Plex Mono',monospace;font-size:12px;">
+            <!-- Step 0 -->
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:70px;font-size:10px;color:var(--text-dim);text-align:right;">S = ∅</div>
+              <div style="display:flex;gap:3px;">
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F1</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F2</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F3</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F4</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F5</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F6</div>
+              </div>
+              <div style="font-size:10px;color:var(--text-dim)">loss = 2.31 (all off)</div>
+            </div>
+            <!-- Step 1 -->
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:70px;font-size:10px;color:var(--violet);text-align:right;font-weight:600;">+ F4</div>
+              <div style="display:flex;gap:3px;">
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F1</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F2</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F3</div>
+                <div style="width:36px;height:28px;border-radius:4px;background:var(--violet);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">F4</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F5</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F6</div>
+              </div>
+              <div style="font-size:10px;color:var(--violet)">loss = 1.87 <span style="color:var(--emerald)">↓ 0.44</span></div>
+            </div>
+            <!-- Step 2 -->
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:70px;font-size:10px;color:var(--violet);text-align:right;font-weight:600;">+ F1</div>
+              <div style="display:flex;gap:3px;">
+                <div style="width:36px;height:28px;border-radius:4px;background:var(--violet);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">F1</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F2</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F3</div>
+                <div style="width:36px;height:28px;border-radius:4px;background:var(--violet);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">F4</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F5</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F6</div>
+              </div>
+              <div style="font-size:10px;color:var(--violet)">loss = 1.52 <span style="color:var(--emerald)">↓ 0.35</span></div>
+            </div>
+            <!-- Step 3 -->
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:70px;font-size:10px;color:var(--violet);text-align:right;font-weight:600;">+ F6</div>
+              <div style="display:flex;gap:3px;">
+                <div style="width:36px;height:28px;border-radius:4px;background:var(--violet);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">F1</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F2</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F3</div>
+                <div style="width:36px;height:28px;border-radius:4px;background:var(--violet);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">F4</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--border-light);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text-dim)">F5</div>
+                <div style="width:36px;height:28px;border-radius:4px;background:var(--violet);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">F6</div>
+              </div>
+              <div style="font-size:10px;color:var(--violet)">loss = 1.29 <span style="color:var(--emerald)">↓ 0.23</span></div>
+            </div>
+            <!-- Step 4 -->
+            <div style="display:flex;align-items:center;gap:12px;">
+              <div style="width:70px;font-size:10px;color:var(--violet);text-align:right;font-weight:600;">+ F2</div>
+              <div style="display:flex;gap:3px;">
+                <div style="width:36px;height:28px;border-radius:4px;background:var(--violet);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">F1</div>
+                <div style="width:36px;height:28px;border-radius:4px;background:#6d44c8;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">F2</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--rose);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--rose)">F3</div>
+                <div style="width:36px;height:28px;border-radius:4px;background:var(--violet);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">F4</div>
+                <div style="width:36px;height:28px;border-radius:4px;border:1px dashed var(--rose);display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--rose)">F5</div>
+                <div style="width:36px;height:28px;border-radius:4px;background:var(--violet);display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:700">F6</div>
+              </div>
+              <div style="font-size:10px;color:var(--violet)">loss = 1.18 <span style="color:var(--emerald)">↓ 0.11</span> — <span style="color:var(--text-dim)">keep 4, prune F3 &amp; F5</span></div>
+            </div>
+          </div>
+          <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-top:16px;"><strong style="color:var(--text-bright)">The selection order IS the importance score.</strong> F4 was selected first (score = 4), F1 second (score = 3), F6 third (score = 2), F2 fourth (score = 1). Filters never selected (F3, F5) get score 0 and are pruned. Earlier selection = bigger loss reduction = more important.</p>
+        </div>
+
+        <div class="visual">
+          <div class="visual-title">Why forward selection beats backward elimination</div>
+          <div style="display:flex;gap:20px;flex-wrap:wrap;justify-content:center;">
+            <div style="flex:1;min-width:220px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;">
+              <div style="font-size:11px;font-weight:700;color:var(--violet);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.8px">Forward selection (GFS)</div>
+              <div style="font-size:12px;line-height:1.6;color:var(--text-dim)">
+                Start empty, add best filter each step.<br>
+                Each candidate is evaluated from the <strong style="color:var(--text-bright)">full set [N]</strong> at every step.<br>
+                Filters can be selected multiple times.<br>
+                <span style="color:var(--emerald);font-weight:600">Provable O(1/n²) loss rate.</span>
+              </div>
+            </div>
+            <div style="flex:1;min-width:220px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;">
+              <div style="font-size:11px;font-weight:700;color:var(--rose);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.8px">Backward elimination (most other methods)</div>
+              <div style="font-size:12px;line-height:1.6;color:var(--text-dim)">
+                Start full, remove worst filter each step.<br>
+                Search space <strong style="color:var(--text-bright)">shrinks</strong> as filters are removed.<br>
+                Once removed, a filter is gone forever.<br>
+                <span style="color:var(--rose);font-weight:600">No similar convergence guarantee.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <p class="explain"><strong>What it measures:</strong> The direct contribution of each filter to the network's actual loss. Unlike heuristic criteria (magnitude, sparsity, rank), GFS uses the <em>real loss function</em> as the scoring criterion. A filter is important if adding it to the subnetwork meaningfully reduces the classification loss on calibration data.</p>
+        <p class="explain"><strong>Computational cost:</strong> GFS is significantly more expensive than local scoring methods. For a layer with N<sub>h</sub> filters and n<sub>keep</sub> to retain, it requires N<sub>h</sub> × n<sub>keep</sub> forward passes per layer (evaluating each candidate at each step). For VGG-16's 512-filter layers keeping 358 filters (30% pruning), that's ~183,000 forward passes per layer. Mini-batch evaluation keeps this tractable.</p>
+        <p class="explain"><strong>Layer-wise sequential application:</strong> The paper's Algorithm 1 prunes layers sequentially from input to output. Each layer's pruning immediately affects the input to subsequent layers, so later layers are scored with the already-pruned earlier layers in place.</p>
+
+        <div class="callout">
+          <div class="callout-title">GFS vs local scoring methods</div>
+          <p>Local methods (APoZ, DropNet, Entropy, HRank, CHIP, LRMF) score each filter using a <strong>proxy criterion</strong> — sparsity, magnitude, rank, independence — hoping it correlates with actual importance. GFS skips the proxy entirely and directly measures loss reduction. The trade-off is time: scoring a 512-filter layer with APoZ takes one forward pass; GFS takes hundreds of thousands. But the scores are provably optimal in a way no heuristic can guarantee.</p>
+        </div>
+
+        <div class="callout" style="border-color:#14b8a6;background:#14b8a610">
+          <div class="callout-title" style="color:#14b8a6">LOCAL* — Benchmark classification</div>
+          <p>Although the original paper proposes GFS with a cross-layer global budget, our benchmark classifies it as <strong>local</strong>. The importance scores are ordinal ranks (1 to C<sub>out</sub>); dividing by layer width maps every layer to the same uniform distribution, making the effective budget allocation identical to a per-layer uniform protocol. The LOCAL* badge reflects this collapse — see the methodology section of the thesis for the full argument.</p>
+        </div>
+
+        <div class="section-label" style="color:#14b8a6;margin-top:20px">Our implementation — LOCAL* (identical scoring, single mode)</div>
+        <p class="explain">Our code runs the same greedy forward-selection pipeline as the paper and uses global budget allocation. There is no separate local variant. The LOCAL* classification reflects our analytical finding that ordinal selection-order ranks divided by layer width produce the same uniform distribution per layer as a per-layer uniform protocol — the effective budget allocation is local even though the code pools scores globally.</p>
+
+        <div class="visual" style="margin-top:16px">
+          <div class="visual-title">How images feed into the filter score</div>
+          <div style="font-size:11px;font-family:'IBM Plex Mono',monospace;line-height:2;color:var(--text-dim)">
+            <div>pre-collect: img₁…imgₙ → <span style="color:var(--violet)">tensor T</span> &nbsp;<span style="color:#555"># capped at 256 images for loss evaluation</span></div>
+            <div style="border-top:1px solid #333;margin-top:6px;padding-top:6px">
+              per layer, greedy step 1 (try up to 20 random candidates, not all):<br>
+              &nbsp;&nbsp;try filter A: zero layer except S∪{A}, scale, fwd full model(<span style="color:var(--violet)">T</span>) → CE loss = 2.31<br>
+              &nbsp;&nbsp;try filter B: zero layer except S∪{B}, scale, fwd full model(<span style="color:var(--violet)">T</span>) → CE loss = 1.87 &nbsp;<span style="color:var(--emerald)">← best → add to S</span><br>
+              &nbsp;&nbsp;try filter C: zero layer except S∪{C}, scale, fwd full model(<span style="color:var(--violet)">T</span>) → CE loss = 2.05<br>
+              step 2, 3, …: same T, same up-to-20 sampling — never re-collected
+            </div>
+            <div style="border-top:1px solid #333;margin-top:6px;padding-top:6px">
+              selection order → <span style="color:var(--violet)">importance score</span> &nbsp;<span style="color:#555">(loss is over all ≤256 images at once; no per-image value)</span>
+            </div>
+          </div>
+        </div>
+        <div class="code-ref">
+          <div class="code-title">In our code (gfs.py)</div>
+          <div class="code-line"><span class="code-comment"># All calibration data collected once upfront — no re-iteration per layer</span></div>
+          <div class="code-line">eval_imgs, eval_lbls = _get_calibration_batch(dataloader) <span class="code-comment"># fixed tensor</span></div>
+          <div class="code-line"><span class="code-comment"># Per layer: N_h × n_keep forward passes on that fixed set</span></div>
+          <div class="code-line"><span class="code-comment"># Greedy forward selection: start empty, add best filter each step</span></div>
+          <div class="code-line">selected = set()</div>
+          <div class="code-line">for step in range(n_keep):</div>
+          <div class="code-line">&nbsp;&nbsp;for k in range(N_h): <span class="code-comment"># try each candidate</span></div>
+          <div class="code-line">&nbsp;&nbsp;&nbsp;&nbsp;candidate = selected | {k}</div>
+          <div class="code-line">&nbsp;&nbsp;&nbsp;&nbsp;mask_weight[j] = orig_weight[j] for j in candidate</div>
+          <div class="code-line">&nbsp;&nbsp;&nbsp;&nbsp;scale = N_h / len(candidate) <span class="code-comment"># match output magnitude</span></div>
+          <div class="code-line">&nbsp;&nbsp;&nbsp;&nbsp;loss = compute_loss(model, eval_imgs, eval_lbls)</div>
+          <div class="code-line">&nbsp;&nbsp;selected.add(best_k) <span class="code-comment"># add filter with lowest loss</span></div>
+          <div class="code-line">&nbsp;&nbsp;importance[best_k] = n_keep - step <span class="code-comment"># earlier = higher score</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ NISP ═══════════════════════ -->
+  <div class="panel" id="panel-nisp">
+    <div class="method-card" style="border-color:#8b5cf640">
+      <div class="method-header">
+        <h2>NISP — Neuron Importance Score Propagation <span style="font-size:12px;font-weight:400;color:var(--violet);background:#8b5cf620;padding:2px 8px;border-radius:4px;margin-left:8px;">GLOBAL</span></h2>
+        <div class="tagline">Trace every filter's contribution forward to the classifier — prune what the classifier doesn't need</div>
+      </div>
+      <div class="method-body">
+        <div class="section-label" style="color:var(--violet)">Paper pipeline — GLOBAL (propagated scores, cross-layer budget)</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Identify FRL</div>
+              <div class="pipe-desc">The Final Response Layer is the <strong>second-to-last Linear</strong> layer — its outputs are the direct inputs to classification.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Rank FRL Neurons</div>
+              <div class="pipe-desc">Forward <strong>all calibration batches</strong> through the network; collect FRL activations batch-by-batch (no per-image loop). Score each neuron by variance × mean-|activation| across all collected activations.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Propagate Backward — all layers, no more data</div>
+              <div class="pipe-desc"><code>s<sub>k</sub> = |W<sup>(k+1)</sup>|<sup>⊤</sup> s<sub>k+1</sub></code> — one matrix multiply per layer back to conv1. Pure weight operations: all layers scored in one backward sweep, no calibration images involved.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Global Prune</div>
+              <div class="pipe-desc">Normalize scores per-layer, rank globally, remove bottom fraction.</div>
+            </div>
+          </div>
+        </div>
+
+        <p class="explain"><strong>Key idea:</strong> A filter in an early layer can receive a high score even if its own activations look unremarkable — what matters is whether <em>important neurons later in the network</em> depend on it. Importance is a weighted sum of all downstream neurons' importance, with weights being absolute connection strengths.</p>
+        <p class="explain"><strong>Why per-layer normalization matters:</strong> FC layers are never pruned in our implementation — only Conv2d filters. But normalization is still needed because backward propagation through many weight matrices accumulates scale: early conv layers end up with systematically higher absolute scores than later ones, simply because importance has been multiplied through more layers. Without normalizing each layer to [0, 1] before global ranking, early layers dominate and later layers are never pruned regardless of their actual importance.</p>
+        <p class="explain"><strong>Efficiency:</strong> One forward pass for FRL activations + one backward sweep of matrix multiplications. No per-image SVD, no backpropagation, no iterative optimization.</p>
+        <div class="section-label" style="color:#14b8a6;margin-top:20px">Our implementation — two modes</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:#14b8a6;color:#000">1–3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:#14b8a6">Identical scoring</div>
+              <div class="pipe-desc">Same FRL scoring and backward propagation as the paper. Steps 1–3 are unchanged in both modes.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">4a</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">NISP — global</div>
+              <div class="pipe-desc">Min-max normalisation per layer → cross-layer ranking → remove bottom fraction. Same as paper.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow" style="color:var(--text-dim)">or</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:#14b8a6;color:#000">4b</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:#14b8a6">NISP_local</div>
+              <div class="pipe-desc">Same propagated scores → per-layer uniform budget. Isolates the scoring criterion from cross-layer allocation.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="visual" style="margin-top:16px">
+          <div class="visual-title">How images feed into the filter score</div>
+          <div style="font-size:11px;font-family:'IBM Plex Mono',monospace;line-height:2;color:var(--text-dim)">
+            <div>img₁ → fwd → FRL activations: [0.3, 1.2, 0.0, …] → <span style="color:var(--violet)">row 1 in activation matrix</span></div>
+            <div>img₂ → fwd → FRL activations: [0.1, 0.8, 0.2, …] → <span style="color:var(--violet)">row 2 in activation matrix</span></div>
+            <div>&nbsp;&nbsp;⋮</div>
+            <div>imgₙ → fwd → FRL activations: [0.5, 0.9, 0.1, …] → <span style="color:var(--violet)">row N in activation matrix</span></div>
+            <div style="border-top:1px solid #333;margin-top:6px;padding-top:6px">
+              score[neuron k] = var(col k) × mean(|col k|) &nbsp;<span style="color:#555"># statistics over all N images</span><br>
+              → propagate backward through weights — no more images from here<br>
+              → <span style="color:var(--violet)">conv filter score</span> = |W|ᵀ × neuron scores
+            </div>
+          </div>
+        </div>
+        <div class="code-ref">
+          <div class="code-title">In our code (nisp.py)</div>
+          <div class="code-line"><span class="code-comment"># Iteration: calibration batches → batch-level activation accumulation</span></div>
+          <div class="code-line">for batch_idx, (images, _) in enumerate(dataloader): model(images) <span class="code-comment"># no per-image loop</span></div>
+          <div class="code-line"><span class="code-comment"># Propagate importance backward (Proposition 2, Yu et al.)</span></div>
+          <div class="code-line">prev_importance = W.abs().t() @ current_importance <span class="code-comment"># |W|^T @ s_{k+1}</span></div>
+          <div class="code-line"><span class="code-comment"># Normalize per-layer before global ranking</span></div>
+          <div class="code-line">normalized[name] = (s - s.min()) / (s.max() - s.min())</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ ThiNet ═══════════════════════ -->
+  <div class="panel" id="panel-thinet">
+    <div class="method-card" style="border-color:#8b5cf640">
+      <div class="method-header">
+        <h2>ThiNet — Reconstruction-based Pruning <span style="font-size:12px;font-weight:400;color:#14b8a6;background:#14b8a620;padding:2px 8px;border-radius:4px;margin-left:8px;">LOCAL</span></h2>
+        <div class="tagline">If removing a filter doesn't change the output two layers ahead, it's redundant</div>
+      </div>
+      <div class="method-body">
+        <div class="section-label" style="color:var(--violet)">Paper pipeline — LOCAL (per-layer sequential, fixed ratio per layer)</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Sample Data — repeated per layer</div>
+              <div class="pipe-desc">The full calibration dataloader is re-iterated <strong>separately for each layer pair</strong>. For each image, pick 10 random spatial positions at the output of layer i+1; each position adds one row to a regression matrix x̂ (shape: C columns, one per channel of layer i). By the end, one matrix covers <em>all images × 10 rows</em> for this layer — no averaging, raw rows stacked.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Greedy Selection — per layer, on full matrix</div>
+              <div class="pipe-desc">Runs <strong>once per layer</strong> on the complete accumulated matrix (all images combined). No more data passes — purely matrix operations. Picks the T channels whose removal minimises reconstruction error of layer i+2's output.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Least-Squares</div>
+              <div class="pipe-desc">Rescale surviving channels' weights via least-squares to minimize residual error. Better init for fine-tuning.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Prune + Fine-tune + Next</div>
+              <div class="pipe-desc">Remove channels, fine-tune this layer, propagate to next. Repeat layer-by-layer from early to deep.</div>
+            </div>
+          </div>
+        </div>
+
+        <p class="explain"><strong>Key idea:</strong> ThiNet looks at layer i+2 (two layers ahead) to decide what to prune at layer i. If a channel's removal barely changes the downstream output, it's redundant. This is a <em>reconstruction-based</em> criterion, not an activation-statistics one.</p>
+        <p class="explain"><strong>Greedy + least-squares:</strong> The greedy algorithm adds one channel at a time to the "remove" set T, always picking the candidate that increases reconstruction error the least. After selection, a least-squares rescaling adjusts surviving weights — this gives the pruned network a much better starting point for fine-tuning.</p>
+        <p class="explain"><strong>Strength:</strong> Reconstruction-based selection provides a superior initialization. The authors report pruned VGG-16 can even <em>outperform</em> the unpruned baseline, because removing redundant filters acts as regularization.</p>
+        <div class="section-label" style="color:#14b8a6;margin-top:20px">Our implementation — LOCAL (same pipeline, no per-layer fine-tuning)</div>
+        <p class="explain">Same per-layer sequential greedy selection and least-squares rescaling as the paper. We omit per-layer fine-tuning — all fine-tuning happens once after all layers are pruned. Local only, no global variant.</p>
+
+        <div class="visual" style="margin-top:16px">
+          <div class="visual-title">How images feed into the filter score</div>
+          <div style="font-size:11px;font-family:'IBM Plex Mono',monospace;line-height:2;color:var(--text-dim)">
+            <div>img₁ → 10 positions → 10 rows appended to <span style="color:var(--violet)">A</span></div>
+            <div>img₂ → 10 positions → 10 rows appended to <span style="color:var(--violet)">A</span></div>
+            <div>&nbsp;&nbsp;⋮</div>
+            <div>imgₙ → 10 positions → 10 rows appended to <span style="color:var(--violet)">A</span> &nbsp;<span style="color:#555"># A = (N·10 rows) × C cols — no averaging, raw rows stacked</span></div>
+            <div style="border-top:1px solid #333;margin-top:6px;padding-top:6px">
+              greedy on full <span style="color:var(--violet)">A</span>: no more images — which T channels to remove?<br>
+              <span style="color:#555">(outcome is keep/remove per filter, not a continuous score)</span>
+            </div>
+          </div>
+        </div>
+        <div class="code-ref">
+          <div class="code-title">In our code (thinet.py)</div>
+          <div class="code-line"><span class="code-comment"># Iteration: batches → per image → random spatial samples</span></div>
+          <div class="code-line">for batch_idx, (images, _) in enumerate(dataloader):</div>
+          <div class="code-line">&nbsp;&nbsp;for b in range(B): <span class="code-comment"># per image in batch</span></div>
+          <div class="code-line">&nbsp;&nbsp;&nbsp;&nbsp;positions = randperm(H_out * W_out)[:n_samples_per_image] <span class="code-comment"># random spatial locations</span></div>
+          <div class="code-line"><span class="code-comment"># Incremental greedy: maintain running sum, pick channel with least marginal error</span></div>
+          <div class="code-line">marginal = 2 * (running_sum @ candidates) + (candidates ** 2).sum(dim=0)</div>
+          <div class="code-line">best_c = marginal.argmin()</div>
+          <div class="code-line"><span class="code-comment"># Least-squares rescaling of surviving weights</span></div>
+          <div class="code-line">w_hat = torch.linalg.lstsq(X_kept, Y).solution</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ AOFP ═══════════════════════ -->
+  <div class="panel" id="panel-aofp">
+    <div class="method-card" style="border-color:#8b5cf640">
+      <div class="method-header">
+        <h2>AOFP — Approximated Oracle Filter Pruning <span style="font-size:12px;font-weight:400;color:var(--violet);background:#8b5cf620;padding:2px 8px;border-radius:4px;margin-left:8px;">GLOBAL</span></h2>
+        <div class="tagline">Measure the damage of removing a filter by looking only one layer ahead</div>
+      </div>
+      <div class="method-body">
+        <div class="section-label" style="color:var(--violet)">Paper pipeline — GLOBAL (damage scores ranked cross-layer)</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Base Path — all layers, one pass</div>
+              <div class="pipe-desc">One forward pass per batch scores <strong>all layers simultaneously</strong> via hooks — no per-layer re-iteration. Each batch's output at every layer is captured at once as the reference.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Random Ablation — all layers, 20 rounds per batch</div>
+              <div class="pipe-desc">Per batch, per layer: <strong>20 rounds</strong> — each round zeros a random half of that layer's channels and forwards the whole batch. Damage t = mean over images in the batch of normalised squared error (averaged, not summed). t is added to each ablated channel's running total.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Damage Score — per filter, all layers</div>
+              <div class="pipe-desc"><code>t = ||ref - ablated||² / ||ref||²</code>, averaged over images in the batch. Final score per channel = mean t across all rounds and batches it was ablated in. All layers scored simultaneously — no per-layer re-run.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Global Prune</div>
+              <div class="pipe-desc">Low damage = unimportant. Rank all filters globally across layers, remove bottom fraction — cross-layer budget.</div>
+            </div>
+          </div>
+        </div>
+
+        <p class="explain"><strong>Damage Isolation:</strong> Instead of observing the final loss (which requires a full forward pass), AOFP shortens the feedback loop to just one layer ahead. This enables independent, simultaneous scoring across all layers.</p>
+        <p class="explain"><strong>Half-ablation sampling:</strong> Each round randomly zeros half the channels, matching the paper's Binary Filter Search scheme (Algorithm 1, lines 8-10). The damage t is attributed to all ablated filters. Over many rounds, each filter accumulates a reliable average damage score.</p>
+
+        <div class="section-label" style="color:#14b8a6;margin-top:20px">Our implementation — two modes</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:#14b8a6;color:#000">1–3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:#14b8a6">Identical scoring</div>
+              <div class="pipe-desc">Same damage isolation scoring as the paper (random half-ablation, normalised deviation at next layer).</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">4a</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">AOFP — global</div>
+              <div class="pipe-desc">Raw scores ranked globally across all layers — no normalization. Remove bottom fraction. Same as paper.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow" style="color:var(--text-dim)">or</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:#14b8a6;color:#000">4b</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:#14b8a6">AOFP_local</div>
+              <div class="pipe-desc">Same damage scores → per-layer uniform budget. Isolates the scoring criterion from cross-layer allocation.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="visual" style="margin-top:16px">
+          <div class="visual-title">How images feed into the filter score</div>
+          <div style="font-size:11px;font-family:'IBM Plex Mono',monospace;line-height:2;color:var(--text-dim)">
+            <div>batch₁ &nbsp;round 1: ablate {3,7,12} → t = <span style="color:var(--violet)">mean over images in batch</span>(damage) → channels {3,7,12} += t</div>
+            <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;round 2: ablate {1,5, 9} → t = <span style="color:var(--violet)">mean over images in batch</span>(damage) → channels {1,5, 9} += t</div>
+            <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;⋮ (20 rounds)</div>
+            <div>batch₂ &nbsp;20 more rounds → same accumulation</div>
+            <div>&nbsp;&nbsp;⋮</div>
+            <div style="border-top:1px solid #333;margin-top:6px;padding-top:6px">
+              score[filter j] = total_damage[j] / count[j]<br>
+              &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= <span style="color:var(--violet)">mean t</span> &nbsp;<span style="color:#555"># averaged over images (per batch) AND over all rounds and batches</span>
+            </div>
+          </div>
+        </div>
+        <div class="code-ref">
+          <div class="code-title">In our code (aofp.py)</div>
+          <div class="code-line"><span class="code-comment"># Iteration: batches → ablation rounds (whole batch at once, no per-image loop)</span></div>
+          <div class="code-line">for batch_idx, (images, _) in enumerate(dataloader):</div>
+          <div class="code-line">&nbsp;&nbsp;for _round in range(n_ablation_rounds): <span class="code-comment"># random half-channel ablations</span></div>
+          <div class="code-line"><span class="code-comment"># Damage Isolation: compare base vs ablated output at layer i+1</span></div>
+          <div class="code-line">diff_sq = ((ref - ref_abl) ** 2).sum(dim=(1,2,3))</div>
+          <div class="code-line">t = (diff_sq / ref_norm_sq).mean().item()</div>
+          <div class="code-line">scores[name] = damage_sum[name] / damage_count[name] <span class="code-comment"># raw average, no normalization</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ DCP ═══════════════════════ -->
+  <div class="panel" id="panel-dcp">
+    <div class="method-card" style="border-color:#8b5cf640">
+      <div class="method-header">
+        <h2>DCP — Discrimination-aware Channel Pruning <span style="font-size:12px;font-weight:400;color:#14b8a6;background:#14b8a620;padding:2px 8px;border-radius:4px;margin-left:8px;">LOCAL*</span></h2>
+        <div class="tagline">Keep filters that truly contribute to discriminative power, not just reconstruction accuracy</div>
+      </div>
+      <div class="method-body">
+        <div class="section-label" style="color:var(--violet)">Paper pipeline — GLOBAL (stage-wise, interleaved fine-tuning)</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Attach Aux Classifiers</div>
+              <div class="pipe-desc">Attach a small classification head at 2 evenly-spaced intermediate conv layers. Each head: <strong>BatchNorm → ReLU → AvgPool(1×1) → Linear(C, 10)</strong> — takes a conv layer's feature maps and tries to predict the class label directly. This gives every intermediate layer a discriminative loss signal.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Fine-tune with Joint Loss</div>
+              <div class="pipe-desc"><strong>L = L<sub>f</sub> + λ·L<sub>aux</sub></strong><br>L<sub>f</sub> = cross-entropy at the final classifier. L<sub>aux</sub> = mean cross-entropy at the aux heads. Forward → backward → <strong>SGD weight update</strong>. Repeated over many batches/epochs to make intermediate layers more discriminative before scoring.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Score + Select</div>
+              <div class="pipe-desc">Forward a batch → compute L → <strong>backward</strong> → read ||∂L/∂W<sub>j</sub>||<sub>F</sub> per channel. High gradient = channel is being actively used to reduce loss = important. Select top channels to keep; optimize remaining weights via SGD.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Prune + Repeat</div>
+              <div class="pipe-desc">Remove unchosen channels. Return to step 2 (fine-tune) for the next stage. Repeat for all P+1 stages — budget allocated across stages globally.</div>
+            </div>
+          </div>
+        </div>
+
+        <p class="explain"><strong>Key insight:</strong> Reconstruction-based methods (like ThiNet) may keep a channel just because it helps reproduce the original feature maps — even if that channel contributes nothing to the classification decision. DCP's aux heads force intermediate layers to be evaluated on whether they can actually classify, not just whether they preserve activations.</p>
+        <div class="section-label" style="color:#14b8a6;margin-top:20px">Our implementation — LOCAL* (single-pass, per-layer budget)</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:#14b8a6;color:#000">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:#14b8a6">Attach Aux Classifiers</div>
+              <div class="pipe-desc">Same 2 aux heads as the paper (BatchNorm → ReLU → AvgPool(1×1) → Linear(C, 10)), attached at the same evenly-spaced intermediate conv layers. <strong>No fine-tuning step</strong> — heads are randomly initialised and used directly for gradient scoring.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:#14b8a6;color:#000">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:#14b8a6">Forward + Backward (no weight update)</div>
+              <div class="pipe-desc">All calibration batches: forward → compute <strong>L = L<sub>f</sub> + λ·L<sub>aux</sub></strong> → <strong>backward</strong> → read ||∂L/∂W<sub>j</sub>||<sub>F</sub> per channel → accumulate. <strong>No SGD step</strong> — gradients are only read, weights never change.<br><span style="color:var(--text-dim);font-size:11px">L<sub>f</sub> = cross-entropy at the final VGG classifier. L<sub>aux</sub> = mean cross-entropy across the 2 aux heads.</span></div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Local Prune</div>
+              <div class="pipe-desc">Per-layer: remove channels with lowest mean gradient magnitude. No global variant.</div>
+            </div>
+          </div>
+        </div>
+        <div class="visual" style="margin-top:16px">
+          <div class="visual-title">How images feed into the filter score</div>
+          <div style="font-size:11px;font-family:'IBM Plex Mono',monospace;line-height:2;color:var(--text-dim)">
+            <div>batch₁ → fwd+bwd → ||∂L/∂W_j||_F for each filter j &nbsp;<span style="color:#555"># one gradient magnitude per filter</span></div>
+            <div>batch₂ → fwd+bwd → ||∂L/∂W_j||_F for each filter j</div>
+            <div>&nbsp;&nbsp;⋮</div>
+            <div>batchₙ → fwd+bwd → ||∂L/∂W_j||_F for each filter j</div>
+            <div style="border-top:1px solid #333;margin-top:6px;padding-top:6px">
+              score[filter j] = <span style="color:var(--violet)">mean</span>(||∂L/∂W_j||_F) across all batches<br>
+              <span style="color:#555">(images feed in through the gradient — no explicit per-image value extracted)</span>
+            </div>
+          </div>
+        </div>
+        <p class="explain"><strong>Result highlight (paper):</strong> On ILSVRC-12, pruning 30% of ResNet-50 channels actually <em>improves</em> accuracy by 0.39% over baseline — the auxiliary losses act as powerful regularizers.</p>
+
+        <div class="callout">
+          <div class="callout-title">DCP vs ThiNet</div>
+          <p>ThiNet minimizes reconstruction error alone — it preserves feature maps but may keep discriminatively useless channels. DCP adds classification-aware losses, directly measuring whether a channel matters for the task. This is why DCP outperforms ThiNet by 0.81% top-1 on ResNet-50 at 50% pruning.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════ REPrune ═══════════════════════ -->
+  <div class="panel" id="panel-reprune">
+    <div class="method-card" style="border-color:#8b5cf640">
+      <div class="method-header">
+        <h2>REPrune — Kernel Representative Selection <span style="font-size:12px;font-weight:400;color:#14b8a6;background:#14b8a620;padding:2px 8px;border-radius:4px;margin-left:8px;">LOCAL*</span></h2>
+        <div class="tagline">Channel pruning that emulates kernel pruning — select filters covering the most representative kernels</div>
+      </div>
+      <div class="method-body">
+        <div class="section-label" style="color:var(--violet)">Paper pipeline — GLOBAL (budget from BN γ, training-integrated)</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Train with Sparsity Loss</div>
+              <div class="pipe-desc">Train with BN scaling factors (γ) penalised by a sparsity loss. The γ magnitudes determine per-layer channel counts — global budget via shared regularisation.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Cluster Kernels</div>
+              <div class="pipe-desc">For each layer: cluster weight kernels (Ward's method). The γ-derived channel count sets the target number of clusters.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--violet);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--violet)">Greedy MCP</div>
+              <div class="pipe-desc">Maximum Coverage Problem: greedily select filters that cover the most uncovered clusters. Budget per layer (how many to keep) is set by γ.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--emerald);color:#fff">4</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--emerald)">Prune + Resume Training</div>
+              <div class="pipe-desc">Remove unchosen channels and continue training. Integrated with the training loop.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-label" style="color:#14b8a6;margin-top:20px">Our implementation — LOCAL* (skip paper step 1; add explicit budget step)</div>
+        <div class="pipeline">
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:#14b8a6;color:#000">1</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:#14b8a6">Cluster Kernels <span style="font-weight:400;font-size:11px">(= paper step 2)</span></div>
+              <div class="pipe-desc">Start here — paper step 1 is skipped entirely. No training, no γ factors. Run Ward's agglomerative clustering directly on the pretrained weight kernels.</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:#14b8a6;color:#000">2</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:#14b8a6">Greedy MCP <span style="font-weight:400;font-size:11px">(= paper step 3)</span></div>
+              <div class="pipe-desc">Maximum Coverage Problem: at each step, pick the unselected filter that covers the most <em>currently uncovered</em> clusters (coverage is recomputed dynamically after each pick, not pre-scored). Selection order → ordinal importance scores (first selected = most unique coverage = most important).</div>
+            </div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step">
+            <div class="pipe-num" style="background:var(--rose);color:#fff">3</div>
+            <div class="pipe-box">
+              <div class="pipe-title" style="color:var(--rose)">Global Budget → Prune <span style="font-weight:400;font-size:11px">(replaces paper step 1's γ)</span></div>
+              <div class="pipe-desc">Since we have no γ factors to set per-layer budgets, we apply an explicit global pruning ratio: pool ordinal scores across all layers, remove the bottom fraction. This is the step that substitutes for what γ did implicitly in the paper.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="visual" style="margin-top:16px">
+          <div class="visual-title">How images feed into the filter score</div>
+          <div style="font-size:11px;font-family:'IBM Plex Mono',monospace;line-height:2;color:var(--text-dim)">
+            <div style="color:var(--emerald);font-weight:600">No images — REPrune is the only method in the benchmark that uses no calibration data.</div>
+            <div style="border-top:1px solid #333;margin-top:6px;padding-top:6px">
+              input: pretrained weight tensors W<sup>l</sup> ∈ ℝ<sup>C_out × C_in × kH × kW</sup><br>
+              → cluster kernels (Ward's, on weights) → greedy MCP (on clusters, no data)<br>
+              → selection order → <span style="color:#14b8a6">importance score</span> &nbsp;<span style="color:#555"># purely structural, no activation statistics</span>
+            </div>
+            <div style="border-top:1px solid #333;margin-top:6px;padding-top:6px;color:var(--text-dim)">
+              Consequence: given the same pretrained weights, REPrune produces <strong style="color:var(--text-bright)">identical pruning decisions regardless of the dataset</strong>. Swap the calibration set entirely — the result doesn't change. The only dataset influence is indirect: the weights were shaped by training on that data.
+            </div>
+          </div>
+        </div>
+        <p class="explain"><strong>Key insight:</strong> Kernel pruning (removing individual 3×3 slices within a filter) achieves fine granularity but produces sparse models needing special hardware. REPrune gets the <em>effect</em> of kernel pruning through channel pruning: it identifies which kernels are similar via clustering, then selects the filters that collectively cover the most representative kernels.</p>
+        <p class="explain"><strong>Why Ward's method:</strong> Ward's linkage ensures monotonically increasing merge distances, giving a consistent hierarchy. The linkage cut-off h<sup>l</sup> is set per-layer based on channel sparsity, ensuring clusters reflect genuine kernel similarity rather than an arbitrary threshold.</p>
+        <p class="explain"><strong>Our adaptation:</strong> The paper's native framework integrates pruning with training via a concurrent training-pruning paradigm using BN scaling factors (γ) to progressively determine layer-wise sparsity. We adapt REPrune to our one-shot benchmark protocol by performing kernel clustering and MCP filter selection directly on the pretrained model's weight tensors — no calibration data or BN γ factors are needed. This isolates the <em>scoring criterion</em> (kernel clustering + coverage maximisation) from the <em>training pipeline</em>. REPrune is the only method in our benchmark that operates entirely on <em>weight structure</em> rather than activation statistics or loss evaluation.</p>
+
+        <div class="callout">
+          <div class="callout-title">REPrune vs other channel pruning</div>
+          <p>Most channel pruning methods select filters based on importance scores (magnitude, activation statistics, loss contribution). REPrune instead asks: which <strong>subset of filters</strong> best represents the diversity of all kernels in the layer? This coverage-based approach preserves kernel-level diversity that importance-based methods might miss — a filter can have low magnitude but contain a unique kernel pattern that no other filter covers.</p>
+        </div>
+
+        <div class="callout" style="border-color:#14b8a6;background:#14b8a610">
+          <div class="callout-title" style="color:#14b8a6">LOCAL* — Benchmark classification</div>
+          <p>Although the original paper frames REPrune as a global method, our benchmark classifies it as <strong>local</strong>. Here is why:</p>
+          <p style="margin-top:10px">MCP selection produces an ordering — the 1st chosen filter is most important, the last is least. That ordering is converted to a score by dividing by layer width:</p>
+          <div style="font-size:11px;font-family:'IBM Plex Mono',monospace;line-height:2;margin:10px 0;color:var(--text-dim)">
+            <div>Layer A (4 filters): MCP order F3→F1→F4→F2 → scores 1/4, 2/4, 3/4, 4/4 = <span style="color:var(--text-bright)">0.25, 0.50, 0.75, 1.00</span></div>
+            <div>Layer B (4 filters): MCP order F2→F4→F1→F3 → scores 1/4, 2/4, 3/4, 4/4 = <span style="color:var(--text-bright)">0.25, 0.50, 0.75, 1.00</span></div>
+          </div>
+          <p style="margin-top:8px">Both layers produce the exact same set of normalized scores — regardless of which filters MCP picked or why. Global ranking on these scores always removes the same fraction from every layer. Pruning 50% globally = pruning 50% per layer. The global ranking adds nothing.</p>
+          <p style="margin-top:10px"><strong style="color:var(--text-bright)">How the paper avoids this:</strong> the paper never computes ordinal ranks. Instead, the BN γ factors are the scores — continuous, learned values shaped by the actual training signal. A redundant layer ends up with most γs near zero; a critical layer keeps them high. The per-layer budget falls out from how many γs drop below a threshold, so different layers naturally lose different fractions. Our one-shot adaptation loses this because we discard the training loop and replace γ with an ordinal rank, which collapses to uniform.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Shared across all methods ═══════════════ -->
+  <div class="shared-section">
+    <div class="shared-title">Shared across all 12 methods</div>
+    <p>After scoring, every method feeds into the <strong>same structural pruning + fine-tuning pipeline</strong>. Keep-masks are built per layer, then <code>prune_conv2d_layer()</code> physically removes filtered channels and propagates dimension changes forward through the network. All methods then receive identical fine-tuning: 10 epochs, SGD with cosine annealing at LR 0.001, uniform across all parameters. This ensures the only difference between methods is <em>which</em> filters they chose to remove — not how the network was retrained afterwards.</p>
+  </div>
+
+</div>
+
+<script>
+// Tab switching
+function switchTab(id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+
+// Generate APoZ bar chart
+(function() {
+  const scores = [0.12, 0.35, 0.68, 0.78, 0.45, 0.91, 0.55, 0.85];
+  const labels = ['F1','F2','F3','F4','F5','F6','F7','F8'];
+  const sorted = scores.map((s,i) => ({s, i})).sort((a,b) => b.s - a.s);
+  const pruneCount = 4;
+  const pruneSet = new Set(sorted.slice(0, pruneCount).map(x => x.i));
+
+  const container = document.getElementById('apoz-bars');
+  scores.forEach((s, i) => {
+    const isPruned = pruneSet.has(i);
+    const grp = document.createElement('div');
+    grp.className = 'filter-bar-group';
+    const bar = document.createElement('div');
+    bar.className = 'filter-bar' + (isPruned ? ' pruned' : '');
+    bar.style.height = (s * 100) + '%';
+    if (!isPruned) bar.style.background = `linear-gradient(180deg, #4f8ff7, #2563eb)`;
+    const lbl = document.createElement('div');
+    lbl.className = 'filter-label' + (isPruned ? ' pruned-label' : '');
+    lbl.textContent = labels[i] + '\n' + (s*100).toFixed(0) + '%';
+    lbl.style.whiteSpace = 'pre';
+    grp.appendChild(bar);
+    grp.appendChild(lbl);
+    container.appendChild(grp);
+  });
+})();
+
+// Generate DropNet bar chart
+(function() {
+  const scores = [2.8, 0.4, 1.2, 5.1, 0.9, 3.6, 0.2, 4.3];
+  const labels = ['F1','F2','F3','F4','F5','F6','F7','F8'];
+  const maxS = Math.max(...scores);
+  const sorted = scores.map((s,i) => ({s, i})).sort((a,b) => a.s - b.s);
+  const pruneCount = 4;
+  const pruneSet = new Set(sorted.slice(0, pruneCount).map(x => x.i));
+
+  const container = document.getElementById('dropnet-bars');
+  scores.forEach((s, i) => {
+    const isPruned = pruneSet.has(i);
+    const grp = document.createElement('div');
+    grp.className = 'filter-bar-group';
+    const bar = document.createElement('div');
+    bar.className = 'filter-bar' + (isPruned ? ' pruned' : '');
+    bar.style.height = (s / maxS * 100) + '%';
+    if (!isPruned) bar.style.background = `linear-gradient(180deg, #10b981, #059669)`;
+    const lbl = document.createElement('div');
+    lbl.className = 'filter-label' + (isPruned ? ' pruned-label' : '');
+    lbl.textContent = labels[i] + '\n' + s.toFixed(1);
+    lbl.style.whiteSpace = 'pre';
+    grp.appendChild(bar);
+    grp.appendChild(lbl);
+    container.appendChild(grp);
+  });
+})();
+
+// HRank grids
+(function() {
+  // Rank 1: all rows identical
+  const r1 = document.getElementById('rank1-grid');
+  const row1 = [3, 6, 9, 3];
+  for (let r = 0; r < 4; r++) {
+    row1.forEach(v => {
+      const c = document.createElement('div');
+      c.className = 'mini-cell';
+      c.style.background = `rgba(244, 63, 94, ${v/12})`;
+      c.style.color = v > 5 ? '#fff' : '#f43f5e';
+      c.textContent = v;
+      r1.appendChild(c);
+    });
+  }
+
+  // Rank 2: alternating rows
+  const r2 = document.getElementById('rank2-grid');
+  const rows2 = [[2, 8, 4, 1],[5, 1, 7, 3],[2, 8, 4, 1],[5, 1, 7, 3]];
+  rows2.forEach(row => {
+    row.forEach(v => {
+      const c = document.createElement('div');
+      c.className = 'mini-cell';
+      c.style.background = `rgba(245, 158, 11, ${v/12})`;
+      c.style.color = v > 5 ? '#fff' : '#f59e0b';
+      c.textContent = v;
+      r2.appendChild(c);
+    });
+  });
+
+  // Rank 4: all rows unique
+  const r4 = document.getElementById('rank4-grid');
+  const rows4 = [[9, 1, 3, 7],[2, 8, 5, 1],[6, 3, 9, 4],[1, 7, 2, 8]];
+  rows4.forEach(row => {
+    row.forEach(v => {
+      const c = document.createElement('div');
+      c.className = 'mini-cell';
+      c.style.background = `rgba(16, 185, 129, ${v/12})`;
+      c.style.color = v > 5 ? '#fff' : '#10b981';
+      c.textContent = v;
+      r4.appendChild(c);
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VGG-16 Architecture – CIFAR-10 Adapted</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0c0e13;
+    --surface: #14171e;
+    --border: #1e2230;
+    --text: #c8cdd8;
+    --text-dim: #6b7280;
+    --accent-blue: #4f8ff7;
+    --accent-cyan: #22d3ee;
+    --accent-violet: #8b5cf6;
+    --accent-amber: #f59e0b;
+    --accent-rose: #f43f5e;
+    --accent-emerald: #10b981;
+    --conv-bg: #1a2744;
+    --conv-border: #2d4a7a;
+    --relu-bg: #1a3328;
+    --relu-border: #2d6b4a;
+    --pool-bg: #2a1a3d;
+    --pool-border: #5b3a8a;
+    --fc-bg: #3d2a1a;
+    --fc-border: #8a6a3a;
+    --flatten-bg: #1a2a3d;
+    --flatten-border: #3a5a7a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    min-height: 100vh;
+    overflow-x: auto;
+  }
+
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 40px 32px;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: #e8ecf4;
+    margin-bottom: 8px;
+  }
+
+  .header .subtitle {
+    font-size: 14px;
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+
+  .header .subtitle span {
+    color: var(--accent-cyan);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+  }
+
+  .legend {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .legend-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+  }
+
+  .click-hint {
+    text-align: center;
+    font-size: 12px;
+    color: var(--accent-cyan);
+    margin-bottom: 32px;
+    opacity: 0.7;
+  }
+
+  .architecture {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    overflow-x: auto;
+    padding: 20px 0 40px;
+    position: relative;
+  }
+
+  .block-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+    white-space: nowrap;
+  }
+
+  .block-content {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+
+  .layer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 6px;
+    border-radius: 6px;
+    border: 1px solid;
+    min-width: 54px;
+    position: relative;
+    transition: transform 0.2s, box-shadow 0.2s;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .layer:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    z-index: 10;
+  }
+
+  .layer .type {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 4px;
+  }
+
+  .layer .dims {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    text-align: center;
+    line-height: 1.4;
+  }
+
+  .layer .idx {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 8px;
+    color: var(--text-dim);
+    margin-top: 3px;
+  }
+
+  .layer.conv { background: var(--conv-bg); border-color: var(--conv-border); }
+  .layer.conv .type { color: var(--accent-blue); }
+  .layer.conv .dims { color: #8bb8f0; }
+
+  .layer.relu { background: var(--relu-bg); border-color: var(--relu-border); min-width: 36px; padding: 10px 4px; }
+  .layer.relu .type { color: var(--accent-emerald); }
+
+  .layer.pool { background: var(--pool-bg); border-color: var(--pool-border); min-width: 46px; }
+  .layer.pool .type { color: var(--accent-violet); }
+  .layer.pool .dims { color: #b89cf0; }
+
+  .layer.fc { background: var(--fc-bg); border-color: var(--fc-border); min-width: 64px; }
+  .layer.fc .type { color: var(--accent-amber); }
+  .layer.fc .dims { color: #f0d080; }
+
+  .layer.flatten { background: var(--flatten-bg); border-color: var(--flatten-border); min-width: 50px; }
+  .layer.flatten .type { color: var(--accent-cyan); }
+  .layer.flatten .dims { color: #80d8e8; }
+
+  .layer.dropout { background: #1e1a2a; border-color: #3a2a5a; min-width: 36px; padding: 10px 4px; }
+  .layer.dropout .type { color: var(--accent-rose); font-size: 8px; }
+
+  .layer.softmax { background: #2a1a1e; border-color: #6a3a44; min-width: 50px; }
+  .layer.softmax .type { color: var(--accent-rose); }
+  .layer.softmax .dims { color: #f08080; }
+
+  .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    flex-shrink: 0;
+    color: var(--text-dim);
+    font-size: 14px;
+    align-self: center;
+    margin-top: 20px;
+  }
+
+  .arrow svg { width: 16px; height: 16px; opacity: 0.4; }
+
+  .input-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 20px;
+    cursor: pointer;
+  }
+
+  .input-visual {
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #2563eb33, #7c3aed33, #dc262633);
+    border: 1px solid #334155;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 8px;
+    position: relative;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .input-block:hover .input-visual {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  .input-visual::before {
+    content: '';
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6, #ef4444);
+    opacity: 0.6;
+  }
+
+  .input-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+
+  .input-dims {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--accent-cyan);
+    margin-top: 2px;
+  }
+
+  .output-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 20px;
+    cursor: pointer;
+  }
+
+  .output-visual {
+    width: 56px;
+    height: 40px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #10b98133, #22d3ee33);
+    border: 1px solid #2d6b4a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--accent-emerald);
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .output-block:hover .output-visual {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  .output-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+
+  .output-dims {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--accent-emerald);
+    margin-top: 2px;
+  }
+
+  .section-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .fmap-size {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    color: var(--accent-cyan);
+    opacity: 0.7;
+    margin-top: 6px;
+    text-align: center;
+    cursor: pointer;
+  }
+
+  .fmap-size:hover {
+    opacity: 1;
+    text-decoration: underline;
+  }
+
+  .prunable-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent-rose);
+    position: absolute;
+    top: 4px;
+    right: 4px;
+  }
+
+  .note {
+    text-align: center;
+    margin-top: 24px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .note .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent-rose);
+    vertical-align: middle;
+    margin-right: 4px;
+  }
+
+  .scroll-wrapper {
+    overflow-x: auto;
+    padding-bottom: 12px;
+  }
+
+  .scroll-wrapper::-webkit-scrollbar { height: 6px; }
+  .scroll-wrapper::-webkit-scrollbar-track { background: var(--surface); border-radius: 3px; }
+  .scroll-wrapper::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+  .stats {
+    margin-top: 48px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+  }
+
+  .stat-card .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+
+  .stat-card .value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 20px;
+    font-weight: 600;
+    color: #e8ecf4;
+  }
+
+  .stat-card .detail {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  /* ─── Popup ─── */
+  .popup-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+    padding: 24px;
+  }
+
+  .popup-overlay.visible {
+    display: flex;
+  }
+
+  .popup {
+    background: #181c26;
+    border: 1px solid #2a3040;
+    border-radius: 12px;
+    max-width: 520px;
+    width: 100%;
+    padding: 0;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    animation: popIn 0.2s ease-out;
+    overflow: hidden;
+  }
+
+  @keyframes popIn {
+    from { opacity: 0; transform: scale(0.95) translateY(8px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  .popup-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 18px 24px 14px;
+    border-bottom: 1px solid #2a3040;
+  }
+
+  .popup-header .popup-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #e8ecf4;
+    flex: 1;
+  }
+
+  .popup-header .popup-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .popup-body {
+    padding: 20px 24px 24px;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+
+  .popup-body .explain {
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text);
+    margin-bottom: 16px;
+  }
+
+  .popup-body .explain:last-child { margin-bottom: 0; }
+
+  .popup-body .tech-detail {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-dim);
+    padding: 12px 14px;
+    background: #0c0e1399;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    margin-top: 16px;
+  }
+
+  .popup-body .tech-detail code {
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--accent-cyan);
+    font-size: 11px;
+  }
+
+  .popup-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: background 0.15s, color 0.15s;
+    line-height: 1;
+  }
+
+  .popup-close:hover {
+    background: #2a3040;
+    color: #e8ecf4;
+  }
+
+  .badge-conv { background: var(--conv-bg); color: var(--accent-blue); border: 1px solid var(--conv-border); }
+  .badge-relu { background: var(--relu-bg); color: var(--accent-emerald); border: 1px solid var(--relu-border); }
+  .badge-pool { background: var(--pool-bg); color: var(--accent-violet); border: 1px solid var(--pool-border); }
+  .badge-fc { background: var(--fc-bg); color: var(--accent-amber); border: 1px solid var(--fc-border); }
+  .badge-flatten { background: var(--flatten-bg); color: var(--accent-cyan); border: 1px solid var(--flatten-border); }
+  .badge-dropout { background: #1e1a2a; color: var(--accent-rose); border: 1px solid #3a2a5a; }
+  .badge-output { background: #1a3328; color: var(--accent-emerald); border: 1px solid #2d6b4a; }
+  .badge-input { background: #1a1e2e; color: var(--accent-cyan); border: 1px solid #334155; }
+  .badge-fmap { background: #0e1a2a; color: var(--accent-cyan); border: 1px solid #1e3a5a; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <h1>VGG-16 Architecture</h1>
+    <div class="subtitle">ImageNet pretrained, adapted for CIFAR-10 &nbsp;·&nbsp; Input: <span>3 × 224 × 224</span> &nbsp;·&nbsp; Output: <span>10 classes</span></div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--conv-bg);border:1px solid var(--conv-border)"></div>Conv2d (3×3)</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--relu-bg);border:1px solid var(--relu-border)"></div>ReLU</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--pool-bg);border:1px solid var(--pool-border)"></div>MaxPool2d</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--fc-bg);border:1px solid var(--fc-border)"></div>Linear (FC)</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#1e1a2a;border:1px solid #3a2a5a"></div>Dropout (0.5)</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--flatten-bg);border:1px solid var(--flatten-border)"></div>AdaptiveAvgPool + Flatten</div>
+    <div class="legend-item"><div class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent-rose)"></div>Pruning target</div>
+  </div>
+
+  <div class="click-hint">Click any layer to learn what it does</div>
+
+  <div class="scroll-wrapper">
+    <div class="architecture" id="arch">
+
+      <div class="input-block" onclick="showPopup('input')">
+        <div class="input-visual"></div>
+        <div class="input-label">Input</div>
+        <div class="input-dims">3 × 224 × 224</div>
+      </div>
+
+      <div class="arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h10M10 5l3 3-3 3"/></svg></div>
+
+      <!-- Block 1 -->
+      <div class="section-wrapper">
+        <div class="block-label">Block 1</div>
+        <div class="block-content">
+          <div class="layer conv" onclick="showPopup('conv', {filters:64, inC:3, block:1, idx:'f.0'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">64<br>3×3</div><div class="idx">f.0</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.1</div></div>
+          <div class="layer conv" onclick="showPopup('conv', {filters:64, inC:64, block:1, idx:'f.2'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">64<br>3×3</div><div class="idx">f.2</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.3</div></div>
+          <div class="layer pool" onclick="showPopup('pool', {from:224, to:112, block:1})"><div class="type">Pool</div><div class="dims">2×2</div><div class="idx">f.4</div></div>
+        </div>
+        <div class="fmap-size" onclick="showPopup('fmap', {from:224, to:112, block:1, channels:64})">224→112</div>
+      </div>
+
+      <div class="arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h10M10 5l3 3-3 3"/></svg></div>
+
+      <!-- Block 2 -->
+      <div class="section-wrapper">
+        <div class="block-label">Block 2</div>
+        <div class="block-content">
+          <div class="layer conv" onclick="showPopup('conv', {filters:128, inC:64, block:2, idx:'f.5'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">128<br>3×3</div><div class="idx">f.5</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.6</div></div>
+          <div class="layer conv" onclick="showPopup('conv', {filters:128, inC:128, block:2, idx:'f.7'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">128<br>3×3</div><div class="idx">f.7</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.8</div></div>
+          <div class="layer pool" onclick="showPopup('pool', {from:112, to:56, block:2})"><div class="type">Pool</div><div class="dims">2×2</div><div class="idx">f.9</div></div>
+        </div>
+        <div class="fmap-size" onclick="showPopup('fmap', {from:112, to:56, block:2, channels:128})">112→56</div>
+      </div>
+
+      <div class="arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h10M10 5l3 3-3 3"/></svg></div>
+
+      <!-- Block 3 -->
+      <div class="section-wrapper">
+        <div class="block-label">Block 3</div>
+        <div class="block-content">
+          <div class="layer conv" onclick="showPopup('conv', {filters:256, inC:128, block:3, idx:'f.10'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">256<br>3×3</div><div class="idx">f.10</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.11</div></div>
+          <div class="layer conv" onclick="showPopup('conv', {filters:256, inC:256, block:3, idx:'f.12'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">256<br>3×3</div><div class="idx">f.12</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.13</div></div>
+          <div class="layer conv" onclick="showPopup('conv', {filters:256, inC:256, block:3, idx:'f.14'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">256<br>3×3</div><div class="idx">f.14</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.15</div></div>
+          <div class="layer pool" onclick="showPopup('pool', {from:56, to:28, block:3})"><div class="type">Pool</div><div class="dims">2×2</div><div class="idx">f.16</div></div>
+        </div>
+        <div class="fmap-size" onclick="showPopup('fmap', {from:56, to:28, block:3, channels:256})">56→28</div>
+      </div>
+
+      <div class="arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h10M10 5l3 3-3 3"/></svg></div>
+
+      <!-- Block 4 -->
+      <div class="section-wrapper">
+        <div class="block-label">Block 4</div>
+        <div class="block-content">
+          <div class="layer conv" onclick="showPopup('conv', {filters:512, inC:256, block:4, idx:'f.17'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">512<br>3×3</div><div class="idx">f.17</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.18</div></div>
+          <div class="layer conv" onclick="showPopup('conv', {filters:512, inC:512, block:4, idx:'f.19'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">512<br>3×3</div><div class="idx">f.19</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.20</div></div>
+          <div class="layer conv" onclick="showPopup('conv', {filters:512, inC:512, block:4, idx:'f.21'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">512<br>3×3</div><div class="idx">f.21</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.22</div></div>
+          <div class="layer pool" onclick="showPopup('pool', {from:28, to:14, block:4})"><div class="type">Pool</div><div class="dims">2×2</div><div class="idx">f.23</div></div>
+        </div>
+        <div class="fmap-size" onclick="showPopup('fmap', {from:28, to:14, block:4, channels:512})">28→14</div>
+      </div>
+
+      <div class="arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h10M10 5l3 3-3 3"/></svg></div>
+
+      <!-- Block 5 -->
+      <div class="section-wrapper">
+        <div class="block-label">Block 5</div>
+        <div class="block-content">
+          <div class="layer conv" onclick="showPopup('conv', {filters:512, inC:512, block:5, idx:'f.24'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">512<br>3×3</div><div class="idx">f.24</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.25</div></div>
+          <div class="layer conv" onclick="showPopup('conv', {filters:512, inC:512, block:5, idx:'f.26'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">512<br>3×3</div><div class="idx">f.26</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.27</div></div>
+          <div class="layer conv" onclick="showPopup('conv', {filters:512, inC:512, block:5, idx:'f.28'})"><div class="prunable-dot"></div><div class="type">Conv</div><div class="dims">512<br>3×3</div><div class="idx">f.28</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">f.29</div></div>
+          <div class="layer pool" onclick="showPopup('pool', {from:14, to:7, block:5})"><div class="type">Pool</div><div class="dims">2×2</div><div class="idx">f.30</div></div>
+        </div>
+        <div class="fmap-size" onclick="showPopup('fmap', {from:14, to:7, block:5, channels:512})">14→7</div>
+      </div>
+
+      <div class="arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h10M10 5l3 3-3 3"/></svg></div>
+
+      <!-- Transition -->
+      <div class="section-wrapper">
+        <div class="block-label">Transition</div>
+        <div class="block-content">
+          <div class="layer flatten" onclick="showPopup('avgpool')"><div class="type">AvgPool</div><div class="dims">7×7→1×1</div></div>
+          <div class="layer flatten" onclick="showPopup('flatten')"><div class="type">Flat</div><div class="dims">25088</div></div>
+        </div>
+        <div class="fmap-size" onclick="showPopup('flatten')">512×7×7</div>
+      </div>
+
+      <div class="arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h10M10 5l3 3-3 3"/></svg></div>
+
+      <!-- Classifier -->
+      <div class="section-wrapper">
+        <div class="block-label">Classifier</div>
+        <div class="block-content">
+          <div class="layer fc" onclick="showPopup('fc', {inF:25088, outF:4096, idx:'c.0', which:'first'})"><div class="type">Linear</div><div class="dims">25088<br>→4096</div><div class="idx">c.0</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">c.1</div></div>
+          <div class="layer dropout" onclick="showPopup('dropout')"><div class="type">Drop</div><div class="idx">c.2</div></div>
+          <div class="layer fc" onclick="showPopup('fc', {inF:4096, outF:4096, idx:'c.3', which:'second'})"><div class="type">Linear</div><div class="dims">4096<br>→4096</div><div class="idx">c.3</div></div>
+          <div class="layer relu" onclick="showPopup('relu')"><div class="type">ReLU</div><div class="idx">c.4</div></div>
+          <div class="layer dropout" onclick="showPopup('dropout')"><div class="type">Drop</div><div class="idx">c.5</div></div>
+          <div class="layer softmax" onclick="showPopup('fc_final')"><div class="type">Linear</div><div class="dims">4096<br>→10</div><div class="idx">c.6</div></div>
+        </div>
+        <div class="fmap-size">CIFAR-10 head</div>
+      </div>
+
+      <div class="arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8h10M10 5l3 3-3 3"/></svg></div>
+
+      <div class="output-block" onclick="showPopup('output')">
+        <div class="output-visual">10</div>
+        <div class="output-label">Output</div>
+        <div class="output-dims">10 classes</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="note"><span class="dot"></span> Red dot = pruning target (13 Conv2d layers subject to structured filter pruning; final Linear c.6 excluded)</div>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="label">Total Parameters</div>
+      <div class="value">134.3M</div>
+      <div class="detail">~124M in classifier FC layers</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Conv Layers</div>
+      <div class="value">13</div>
+      <div class="detail">All 3×3 kernels, stride 1, pad 1</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Baseline FLOPs</div>
+      <div class="value">~15.5G</div>
+      <div class="detail">At 224×224 input resolution</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Max Pooling</div>
+      <div class="value">5 layers</div>
+      <div class="detail">2×2 kernel, stride 2 → halves spatial dims</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Classifier</div>
+      <div class="value">3 FC layers</div>
+      <div class="detail">4096 → 4096 → 10 (adapted from 1000)</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Pruning Ratios</div>
+      <div class="value">30 / 50 / 70%</div>
+      <div class="detail">Filter removal per Conv2d layer</div>
+    </div>
+  </div>
+</div>
+
+<!-- Popup overlay -->
+<div class="popup-overlay" id="popupOverlay" onclick="closePopup(event)">
+  <div class="popup" id="popupBox" onclick="event.stopPropagation()">
+    <div class="popup-header">
+      <span class="popup-title" id="popupTitle"></span>
+      <span class="popup-badge" id="popupBadge"></span>
+      <button class="popup-close" onclick="document.getElementById('popupOverlay').classList.remove('visible')">&times;</button>
+    </div>
+    <div class="popup-body" id="popupBody"></div>
+  </div>
+</div>
+
+<script>
+function showPopup(type, data) {
+  const overlay = document.getElementById('popupOverlay');
+  const title = document.getElementById('popupTitle');
+  const badge = document.getElementById('popupBadge');
+  const body = document.getElementById('popupBody');
+
+  let t = '', b = '', bc = '', html = '';
+
+  switch(type) {
+
+    case 'input':
+      t = 'Input Image';
+      b = '3 × 224 × 224';
+      bc = 'badge-input';
+      html = `
+        <p class="explain">This is where the image enters the network. Each CIFAR-10 image is originally tiny (32×32 pixels), but we resize it to 224×224 pixels so it matches the size that VGG-16 was originally designed for (ImageNet images).</p>
+        <p class="explain">The "3" refers to the three colour channels: <strong>red, green, and blue</strong>. So the input is really three 224×224 grids of numbers stacked together — one grid per colour.</p>
+        <div class="tech-detail">
+          <strong>Dimensions:</strong> <code>3 × 224 × 224</code> = 150,528 input values per image<br>
+          <strong>Why resize?</strong> The pretrained VGG-16 weights expect 224×224 inputs. Using the native 32×32 would produce feature maps too small for the classifier.
+        </div>`;
+      break;
+
+    case 'conv':
+      t = `Convolution Layer`;
+      b = `${data.filters} filters · ${data.idx}`;
+      bc = 'badge-conv';
+      const params = data.inC * data.filters * 9 + data.filters;
+      html = `
+        <p class="explain">Think of this layer as a bank of <strong>${data.filters} small pattern detectors</strong>. Each one slides a tiny 3×3 window across the input and looks for a specific visual pattern — like a particular edge, colour gradient, or texture.</p>
+        <p class="explain">Each detector produces one <strong>"feature map"</strong> — a grid showing <em>where</em> in the image that pattern was found. Strong values mean the pattern is present at that location; weak values mean it isn't.</p>
+        <p class="explain">This is a <strong>pruning target</strong> in our experiments. We remove the least important filters entirely — physically deleting them from the network to make it smaller and faster.</p>
+        <div class="tech-detail">
+          <strong>Layer:</strong> <code>${data.idx}</code> (Block ${data.block})<br>
+          <strong>Input channels:</strong> <code>${data.inC}</code> → <strong>Output filters:</strong> <code>${data.filters}</code><br>
+          <strong>Kernel:</strong> <code>3×3</code>, stride 1, padding 1 (preserves spatial size)<br>
+          <strong>Parameters:</strong> <code>${data.inC} × ${data.filters} × 3 × 3 + ${data.filters}</code> = <code>${params.toLocaleString()}</code>
+        </div>`;
+      break;
+
+    case 'relu':
+      t = 'ReLU Activation';
+      b = 'Activation';
+      bc = 'badge-relu';
+      html = `
+        <p class="explain">ReLU is a very simple rule: <strong>if a value is positive, keep it; if it's negative, set it to zero</strong>. That's all it does.</p>
+        <p class="explain">This sounds trivial, but it's essential. Without it, stacking multiple layers would be no more powerful than having a single layer — the network couldn't learn complex patterns like curves, textures, or objects. ReLU adds the "non-linearity" that makes deep learning work.</p>
+        <p class="explain">For pruning, ReLU is important because methods like <strong>APoZ</strong> measure how often a filter's output is zero <em>after</em> ReLU. A filter that almost always produces zeros is likely not contributing much and can be removed.</p>
+        <div class="tech-detail">
+          <strong>Operation:</strong> <code>f(x) = max(0, x)</code><br>
+          <strong>Parameters:</strong> None (zero learnable weights)<br>
+          <strong>Shape:</strong> Unchanged — same dimensions in and out
+        </div>`;
+      break;
+
+    case 'pool':
+      t = `Max Pooling`;
+      b = `${data.from}×${data.from} → ${data.to}×${data.to}`;
+      bc = 'badge-pool';
+      html = `
+        <p class="explain"><strong>The "${data.from}→${data.to}" means the feature maps shrink from ${data.from}×${data.from} to ${data.to}×${data.to}.</strong> Each feature map gets halved in both width and height.</p>
+        <p class="explain">How? Max pooling looks at every 2×2 square of pixels and <strong>keeps only the largest value</strong>, throwing away the other three. Imagine looking at a photo through a grid — in each grid cell, you only remember the brightest spot.</p>
+        <p class="explain"><strong>Why?</strong> Two reasons. First, it makes the network faster — fewer values to process in the next layers. Second, it gives the network tolerance to small shifts: if an edge moves by one pixel, the pooled result stays roughly the same. This helps the network recognise objects regardless of their exact position.</p>
+        <div class="tech-detail">
+          <strong>Operation:</strong> <code>MaxPool2d(kernel=2, stride=2)</code><br>
+          <strong>Spatial change:</strong> <code>${data.from}×${data.from}</code> → <code>${data.to}×${data.to}</code><br>
+          <strong>Parameters:</strong> None (no learnable weights)<br>
+          <strong>Data reduction:</strong> 75% of spatial positions discarded per feature map
+        </div>`;
+      break;
+
+    case 'fmap':
+      t = `Feature Map Dimensions`;
+      b = `Block ${data.block}`;
+      bc = 'badge-fmap';
+      const enterVals = data.channels * data.from * data.from;
+      const leaveVals = data.channels * data.to * data.to;
+      html = `
+        <p class="explain"><strong>"${data.from}→${data.to}" means the image representation shrinks from a ${data.from}×${data.from} grid to a ${data.to}×${data.to} grid</strong> as it passes through this block.</p>
+        <p class="explain">The convolution layers in this block don't change the grid size (they use padding to preserve it). But the <strong>max pooling</strong> layer at the end halves both dimensions — that's where the shrinkage happens.</p>
+        <p class="explain">Throughout the network, the <strong>spatial size gets smaller</strong> (224 → 112 → 56 → 28 → 14 → 7) while the <strong>number of channels gets larger</strong> (64 → 128 → 256 → 512). The network gradually trades fine spatial detail for richer, more abstract descriptions of what's in the image.</p>
+        <div class="tech-detail">
+          <strong>Entering Block ${data.block}:</strong> <code>${data.channels} × ${data.from} × ${data.from}</code> = <code>${enterVals.toLocaleString()}</code> values<br>
+          <strong>Leaving Block ${data.block}:</strong> <code>${data.channels} × ${data.to} × ${data.to}</code> = <code>${leaveVals.toLocaleString()}</code> values<br>
+          <strong>Reduction:</strong> ${Math.round((1 - leaveVals/enterVals) * 100)}% fewer values after pooling
+        </div>`;
+      break;
+
+    case 'avgpool':
+      t = 'Adaptive Average Pooling';
+      b = '7×7 → 1×1';
+      bc = 'badge-flatten';
+      html = `
+        <p class="explain">After Block 5, each of the 512 feature maps is a 7×7 grid. This layer <strong>averages all 49 values in each grid down to a single number</strong>.</p>
+        <p class="explain">This collapses all the spatial information ("where in the image") into a summary of "how strongly this pattern appears overall." The result is <strong>512 numbers</strong>, one per feature map — a compact fingerprint of the image.</p>
+        <div class="tech-detail">
+          <strong>Operation:</strong> <code>AdaptiveAvgPool2d((7,7))</code> followed by flatten<br>
+          <strong>Shape:</strong> <code>512 × 7 × 7</code> → <code>512 × 7 × 7</code> → flattened to <code>25,088</code>
+        </div>`;
+      break;
+
+    case 'flatten':
+      t = 'Flatten';
+      b = '25,088 values';
+      bc = 'badge-flatten';
+      html = `
+        <p class="explain">The convolutional part outputs a 3D block of numbers (512 channels × 7 height × 7 width). The fully connected layers that come next need a simple 1D list. <strong>Flatten just reshapes this 3D block into a single long list</strong> — no computation, just reorganising.</p>
+        <p class="explain">512 × 7 × 7 = <strong>25,088</strong> — so the result is a list of 25,088 numbers that captures everything the convolutional layers detected about the input image.</p>
+        <div class="tech-detail">
+          <strong>Shape:</strong> <code>512 × 7 × 7</code> → <code>25,088</code><br>
+          <strong>Parameters:</strong> None — pure reshape, no computation
+        </div>`;
+      break;
+
+    case 'fc':
+      t = `Fully Connected Layer`;
+      b = `${data.inF.toLocaleString()} → ${data.outF.toLocaleString()} · ${data.idx}`;
+      bc = 'badge-fc';
+      const fcParams = data.inF * data.outF + data.outF;
+      html = `
+        <p class="explain">A fully connected layer connects <strong>every</strong> input to <strong>every</strong> output. With ${data.inF.toLocaleString()} inputs and ${data.outF.toLocaleString()} outputs, that's <strong>${(data.inF * data.outF).toLocaleString()} individual connections</strong>, each with its own learnable weight.</p>
+        <p class="explain">While the convolutional layers extract visual patterns ("there's an edge here, a texture there"), the FC layers learn to <strong>combine those patterns into a decision</strong>. Think of it as reasoning: "I see whiskers, pointy ears, and fur — this is probably a cat."</p>
+        <p class="explain">These layers hold the vast majority of VGG-16's parameters (~124M out of 134M total), which is why this architecture is considered heavy by modern standards.</p>
+        <div class="tech-detail">
+          <strong>Layer:</strong> <code>${data.idx}</code><br>
+          <strong>Parameters:</strong> <code>${data.inF.toLocaleString()} × ${data.outF.toLocaleString()} + ${data.outF.toLocaleString()}</code> = <code>${fcParams.toLocaleString()}</code>
+        </div>`;
+      break;
+
+    case 'dropout':
+      t = 'Dropout';
+      b = 'p = 0.5';
+      bc = 'badge-dropout';
+      html = `
+        <p class="explain">During training, dropout <strong>randomly switches off 50% of the neurons</strong> in this layer — a different random selection each time. This forces the network to spread its knowledge across many neurons rather than relying on just a few.</p>
+        <p class="explain">This prevents <strong>overfitting</strong> — when the network memorises the training images instead of learning general patterns. It's like studying for an exam by covering random parts of your notes each time, so you can't just memorise one path through the material.</p>
+        <p class="explain">During testing and actual use, dropout is turned off and all neurons work together.</p>
+        <div class="tech-detail">
+          <strong>Rate:</strong> <code>p = 0.5</code> (50% of values zeroed during training)<br>
+          <strong>Parameters:</strong> None<br>
+          <strong>At inference:</strong> Disabled — all values pass through unchanged
+        </div>`;
+      break;
+
+    case 'fc_final':
+      t = 'Final Classification Layer';
+      b = '4096 → 10 · c.6';
+      bc = 'badge-fc';
+      html = `
+        <p class="explain">This is the last layer, producing the network's actual prediction. It takes 4,096 abstract feature values and boils them down to exactly <strong>10 numbers — one for each CIFAR-10 class</strong>: airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck.</p>
+        <p class="explain">The class with the highest number is the network's answer. In the original ImageNet VGG-16, this layer output 1,000 values (for 1,000 categories). We replaced it with a 10-output version for CIFAR-10.</p>
+        <p class="explain">This layer is <strong>never pruned</strong> — we need all 10 outputs for our 10 classes. When conv filters earlier in the network are pruned, only this layer's input dimension gets adjusted to match.</p>
+        <div class="tech-detail">
+          <strong>Layer:</strong> <code>c.6</code><br>
+          <strong>Original (ImageNet):</strong> <code>4096 → 1000</code><br>
+          <strong>Adapted (CIFAR-10):</strong> <code>4096 → 10</code><br>
+          <strong>Parameters:</strong> <code>4096 × 10 + 10</code> = <code>40,970</code><br>
+          <strong>Pruning:</strong> Excluded from pruning
+        </div>`;
+      break;
+
+    case 'output':
+      t = 'Output Predictions';
+      b = '10 classes';
+      bc = 'badge-output';
+      html = `
+        <p class="explain">The final output is 10 numbers (called logits), one for each CIFAR-10 class. During evaluation, these are converted to probabilities that sum to 1 — the highest probability is the network's prediction.</p>
+        <p class="explain"><strong>The 10 CIFAR-10 classes:</strong> airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck.</p>
+        <div class="tech-detail">
+          <strong>Loss function:</strong> <code>CrossEntropyLoss</code> (applies softmax internally)<br>
+          <strong>Baseline accuracy:</strong> ~93% after fine-tuning on CIFAR-10
+        </div>`;
+      break;
+  }
+
+  title.textContent = t;
+  badge.textContent = b;
+  badge.className = 'popup-badge ' + bc;
+  body.innerHTML = html;
+  overlay.classList.add('visible');
+}
+
+function closePopup(event) {
+  if (!event || event.target === document.getElementById('popupOverlay')) {
+    document.getElementById('popupOverlay').classList.remove('visible');
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    document.getElementById('popupOverlay').classList.remove('visible');
+  }
+});
+</script>
+
+</body>
+</html>
