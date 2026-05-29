@@ -838,9 +838,10 @@ function showPopup(type, data) {
         <p class="explain">A fully connected layer connects <strong>every</strong> input to <strong>every</strong> output. With ${data.inF.toLocaleString()} inputs and ${data.outF.toLocaleString()} outputs, that's <strong>${(data.inF * data.outF).toLocaleString()} individual connections</strong>, each with its own learnable weight.</p>
         <p class="explain">While the convolutional layers extract visual patterns ("there's an edge here, a texture there"), the FC layers learn to <strong>combine those patterns into a decision</strong>. Think of it as reasoning: "I see whiskers, pointy ears, and fur — this is probably a cat."</p>
         <p class="explain">These layers hold the vast majority of VGG-16's parameters (~124M out of 134M total), which is why this architecture is considered heavy by modern standards.</p>
+        ${data.which === 'second' ? `<p class="explain"><strong>NISP's Final Response Layer (FRL).</strong> This is the layer whose outputs feed directly into the 10-way classification head. NISP scores its 4,096 neurons first, then propagates importance backward through every earlier layer to decide what to prune.</p>` : ''}
         <div class="tech-detail">
           <strong>Layer:</strong> <code>${data.idx}</code><br>
-          <strong>Parameters:</strong> <code>${data.inF.toLocaleString()} × ${data.outF.toLocaleString()} + ${data.outF.toLocaleString()}</code> = <code>${fcParams.toLocaleString()}</code>
+          <strong>Parameters:</strong> <code>${data.inF.toLocaleString()} × ${data.outF.toLocaleString()} + ${data.outF.toLocaleString()}</code> = <code>${fcParams.toLocaleString()}</code>${data.which === 'second' ? '<br><strong>Role:</strong> Final Response Layer (FRL) for NISP' : ''}
         </div>`;
       break;
 
@@ -885,7 +886,7 @@ function showPopup(type, data) {
         <p class="explain"><strong>The 10 CIFAR-10 classes:</strong> airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck.</p>
         <div class="tech-detail">
           <strong>Loss function:</strong> <code>CrossEntropyLoss</code> (applies softmax internally)<br>
-          <strong>Baseline accuracy:</strong> ~93% after fine-tuning on CIFAR-10
+          <strong>Baseline accuracy:</strong> 92.25% after fine-tuning on CIFAR-10
         </div>`;
       break;
   }

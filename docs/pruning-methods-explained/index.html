@@ -1285,7 +1285,7 @@
       <div class="method-body">
 
         <div class="section-label" style="color:var(--violet)">Key Insight: Forward Selection ≠ Backward Elimination</div>
-        <p class="explain">Most pruning methods <strong>remove</strong> filters from a full network (backward elimination). GFS does the opposite: it starts with an <strong>empty</strong> layer and greedily <strong>adds</strong> the filter that most reduces the loss. This is provably better — the paper shows forward selection achieves O(1/n²) loss for n selected filters, while backward elimination has no such guarantee.</p>
+        <p class="explain">Most pruning methods <strong>remove</strong> filters from a full network (backward elimination). GFS does the opposite: it starts with an <strong>empty</strong> layer and greedily <strong>adds</strong> the filter that most reduces the loss. The paper proves that forward selection from a sufficiently over-parameterised pretrained network achieves a prediction error of O(1/n²), while training a same-sized network from random initialisation with standard gradient descent achieves only O(1/n).</p>
 
         <div class="section-label" style="color:var(--violet);margin-top:24px">Paper pipeline — GLOBAL (cross-layer budget, per-layer sequential scoring)</div>
         <div class="pipeline">
@@ -1485,7 +1485,7 @@
             <div class="pipe-num" style="background:var(--violet);color:#fff">1</div>
             <div class="pipe-box">
               <div class="pipe-title" style="color:var(--violet)">Identify FRL</div>
-              <div class="pipe-desc">The Final Response Layer is the <strong>second-to-last Linear</strong> layer — its outputs are the direct inputs to classification.</div>
+              <div class="pipe-desc">The Final Response Layer is the layer whose outputs feed the 10-way classification head — in VGG-16, the second fully-connected layer (4096 neurons).</div>
             </div>
           </div>
           <div class="pipe-arrow">→</div>
@@ -1576,7 +1576,7 @@
     <div class="method-card" style="border-color:#8b5cf640">
       <div class="method-header">
         <h2>ThiNet — Reconstruction-based Pruning <span style="font-size:12px;font-weight:400;color:#14b8a6;background:#14b8a620;padding:2px 8px;border-radius:4px;margin-left:8px;">LOCAL</span></h2>
-        <div class="tagline">If removing a filter doesn't change the output two layers ahead, it's redundant</div>
+        <div class="tagline">If removing a filter doesn't change the next layer's output, it's redundant</div>
       </div>
       <div class="method-body">
         <div class="section-label" style="color:var(--violet)">Paper pipeline — LOCAL (per-layer sequential, fixed ratio per layer)</div>
@@ -1593,7 +1593,7 @@
             <div class="pipe-num" style="background:var(--violet);color:#fff">2</div>
             <div class="pipe-box">
               <div class="pipe-title" style="color:var(--violet)">Greedy Selection — per layer, on full matrix</div>
-              <div class="pipe-desc">Runs <strong>once per layer</strong> on the complete accumulated matrix (all images combined). No more data passes — purely matrix operations. Picks the T channels whose removal minimises reconstruction error of layer i+2's output.</div>
+              <div class="pipe-desc">Runs <strong>once per layer</strong> on the complete accumulated matrix (all images combined). No more data passes — purely matrix operations. Picks the T channels whose removal minimises reconstruction error of layer i+1's output.</div>
             </div>
           </div>
           <div class="pipe-arrow">→</div>
@@ -1614,7 +1614,7 @@
           </div>
         </div>
 
-        <p class="explain"><strong>Key idea:</strong> ThiNet looks at layer i+2 (two layers ahead) to decide what to prune at layer i. If a channel's removal barely changes the downstream output, it's redundant. This is a <em>reconstruction-based</em> criterion, not an activation-statistics one.</p>
+        <p class="explain"><strong>Key idea:</strong> ThiNet looks at layer i+1 (the next conv) to decide what to prune at layer i. If a channel's removal barely changes the next layer's output, it's redundant. This is a <em>reconstruction-based</em> criterion, not an activation-statistics one.</p>
         <p class="explain"><strong>Greedy + least-squares:</strong> The greedy algorithm adds one channel at a time to the "remove" set T, always picking the candidate that increases reconstruction error the least. After selection, a least-squares rescaling adjusts surviving weights — this gives the pruned network a much better starting point for fine-tuning.</p>
         <p class="explain"><strong>Strength:</strong> Reconstruction-based selection provides a superior initialization. The authors report pruned VGG-16 can even <em>outperform</em> the unpruned baseline, because removing redundant filters acts as regularization.</p>
         <div class="section-label" style="color:#14b8a6;margin-top:20px">Our implementation — LOCAL (same pipeline, no per-layer fine-tuning)</div>
