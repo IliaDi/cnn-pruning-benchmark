@@ -616,6 +616,7 @@
 
         <p class="explain"><strong>What it measures:</strong> The fraction of a filter's post-ReLU activations that are exactly zero. A filter at 0.95 APoZ is "sleeping" 95% of the time — it almost never responds to any input at any spatial position.</p>
         <p class="explain"><strong>What it misses:</strong> A filter that always outputs the exact same positive value (say 0.8 for every image, every pixel) has 0% zeros — APoZ sees it as perfectly healthy. But it's actually uninformative because it never varies. Entropy catches this case.</p>
+        <p class="explain"><strong>Our cutoff adaptation:</strong> The original paper uses a <em>mean-plus-one-standard-deviation</em> cutoff on the per-layer APoZ distribution (which removes ~16% of filters under a Gaussian assumption). We replace this with a direct <strong>percentile cutoff</strong> so that exactly the target fraction <code>r</code> is removed, keeping the protocol comparable across methods.</p>
 
         <div class="code-ref">
           <div class="code-title">In our code (apoz.py)</div>
@@ -683,6 +684,11 @@
 
         <p class="explain"><strong>What it measures:</strong> How strongly a filter responds on average — a continuous "activation energy" signal. Where APoZ asks "is it zero or not?" (binary), DropNet asks "how strongly does it fire?" (continuous). A filter that outputs 0.01 consistently would score very low even though APoZ might see it as active.</p>
         <p class="explain"><strong>Key difference from APoZ:</strong> DropNet uses per-layer ranking rather than a global threshold, because activation scales differ massively across VGG-16 layers. Early layers process large spatial maps with small values; deep layers produce small maps with large values.</p>
+
+        <div class="callout" style="border-left-color:var(--emerald);background:#10b98110;border-color:#10b98130;">
+          <div class="callout-title" style="color:var(--emerald)">Our adaptation — one-shot, not iterative</div>
+          <p>The original DropNet paper prescribes an <strong>iterative prune-then-fine-tune schedule</strong>: a small fraction of filters is removed, the network is retrained, and the process is repeated. Under the benchmark protocol, DropNet is collapsed to <strong>one-shot</strong>: scores are computed once on the pretrained baseline, the target fraction is removed in a single step, and all fine-tuning is deferred to the shared 10-epoch post-pruning step. This isolates DropNet's scoring criterion from the recovery boost its iterative loop would otherwise contribute, so it is compared on the same terms as every other method.</p>
+        </div>
 
         <div class="code-ref">
           <div class="code-title">In our code (dropnet.py)</div>
@@ -1034,7 +1040,7 @@
         </div>
 
         <p class="explain"><strong>What it measures:</strong> Whether a filter is telling the layer something <em>new</em>. Unlike HRank (which judges each filter alone), CHIP looks at all filters <em>together</em> and asks: "If I remove this one, can the remaining filters reconstruct what it was saying?" If yes, it's redundant.</p>
-        <p class="explain"><strong>Our 8×8 pooling adaptation:</strong> At 224×224 input, the first conv produces a 64×50,176 matrix — running 65 SVDs per image is far too slow. We pool to 8×8 first (64×64 matrix), which is ~780× faster and preserves inter-channel relationships. This matches the scale the original paper operated at with 32×32 CIFAR-10.</p>
+        <p class="explain"><strong>Our 8×8 pooling adaptation:</strong> At 224×224 input, the first conv produces a 64×50,176 matrix — and a layer of width C requires <strong>C+1 SVDs per image</strong> (one full + one per masked row), so 65 for layer 1 and up to 513 for the deepest VGG-16 layers (C=512). This is far too slow at 224×224 resolution. We pool to 8×8 first (giving a C×64 matrix), which is ~780× faster and preserves inter-channel relationships. This matches the spatial scale the original paper operated at with 32×32 CIFAR-10.</p>
 
         <div class="callout">
           <div class="callout-title">CHIP vs HRank</div>
@@ -1110,7 +1116,7 @@
           <div class="callout-title" style="color:var(--cyan)">Pre-ReLU hooking — why LRMF (and HRank) are different</div>
           <p>APoZ, DropNet, Entropy, and CHIP all hook the <strong>ReLU after each Conv2d</strong> — they need post-activation values because their criteria depend on ReLU behaviour (zero-counting, activation magnitude, etc.).</p>
           <p style="margin-top:8px">LRMF hooks the <strong>Conv2d output directly</strong> (before ReLU), matching the original paper's repo which captures <code>output.data</code> from the conv layer. This is because LRMF compares the <em>shape and structure</em> of feature maps via DCT, not their activation statistics. ReLU would clip all negative values to zero, distorting the frequency-domain representation. The raw conv output preserves the full signal — including negative values — which gives a more faithful frequency fingerprint.</p>
-          <p style="margin-top:8px">HRank also hooks pre-ReLU for a similar reason: matrix rank measures spatial structure, and ReLU doesn't systematically change rank. So in our codebase, <strong>4 methods are post-ReLU</strong> (APoZ, DropNet, Entropy, CHIP) and <strong>2 are pre-ReLU</strong> (HRank, LRMF).</p>
+          <p style="margin-top:8px">So in our codebase, <strong>5 methods hook post-ReLU</strong> (APoZ, DropNet, Entropy, HRank, CHIP) and <strong>1 hooks pre-ReLU</strong> (LRMF). HRank hooks post-ReLU because ReLU's zeroing of negatives is what makes rank-1 collapse easy to detect; without it the rank would rarely drop low enough to discriminate filters.</p>
         </div>
 
         <!-- ── Spatial vs Frequency ── -->
@@ -1258,6 +1264,11 @@
           <p style="font-size:13px;line-height:1.6;color:var(--text-dim);margin-top:14px">This is computed <strong>per image</strong>; row-sums are summed across all images within each batch, then accumulated across all batches, then divided by the <em>number of batches</em> (not the number of images — matching the original paper's implementation). This means the final score scales with batch size, but relative rankings between filters are preserved regardless.</p>
         </div>
 
+        <div class="callout" style="border-left-color:var(--cyan);background:#22d3ee08;border-color:#22d3ee30;">
+          <div class="callout-title" style="color:var(--cyan)">Our adaptation — one-shot, not iterative soft masking</div>
+          <p>The original LRMF implementation uses <strong>iterative soft masking</strong>: the bottom-scoring filter weights are zeroed at regular intervals during training and gradients are masked accordingly, effectively baking a form of fine-tuning into the pruning loop. Under the benchmark protocol, LRMF is applied as a <strong>one-shot structural pruning criterion</strong>: scores are computed identically to the paper (DCT → low-freq crop → pairwise distance row-sum), but channel removal is performed in a single step and no fine-tuning is applied until the external standardised 10-epoch protocol runs.</p>
+        </div>
+
         <div class="code-ref">
           <div class="code-title">In our code (lrmf.py)</div>
           <div class="code-line"><span class="code-comment"># Step 1: Hook raw Conv2d output (pre-ReLU, matches paper repo)</span></div>
@@ -1287,7 +1298,7 @@
         <div class="section-label" style="color:var(--violet)">Key Insight: Forward Selection ≠ Backward Elimination</div>
         <p class="explain">Most pruning methods <strong>remove</strong> filters from a full network (backward elimination). GFS does the opposite: it starts with an <strong>empty</strong> layer and greedily <strong>adds</strong> the filter that most reduces the loss. The paper proves that forward selection from a sufficiently over-parameterised pretrained network achieves a prediction error of O(1/n²), while training a same-sized network from random initialisation with standard gradient descent achieves only O(1/n).</p>
 
-        <div class="section-label" style="color:var(--violet);margin-top:24px">Paper pipeline — GLOBAL (cross-layer budget, per-layer sequential scoring)</div>
+        <div class="section-label" style="color:var(--violet);margin-top:24px">Paper pipeline — per-layer ε-stopping (no cross-layer score pool)</div>
         <div class="pipeline">
           <div class="pipe-step">
             <div class="pipe-num" style="background:var(--violet);color:#fff">1</div>
@@ -1301,7 +1312,7 @@
             <div class="pipe-num" style="background:var(--violet);color:#fff">2</div>
             <div class="pipe-box">
               <div class="pipe-title" style="color:var(--violet)">Try Each — per layer, all images at once</div>
-              <div class="pipe-desc">For each candidate: zero all weights in the layer except S ∪ {k}, scale by N<sub>h</sub>/|S ∪ {k}|, forward <strong>up to 256 images</strong> through the <strong>full model</strong> (not just this layer), compute cross-entropy at the final classifier. At each greedy step only <strong>up to 20 random candidates</strong> are tried — not all remaining filters. Data pre-collected once, reused every step.</div>
+              <div class="pipe-desc">For each candidate: zero all weights in the layer except S ∪ {k}, scale by N<sub>h</sub>/|S ∪ {k}|, forward <strong>a 64-image mini-batch</strong> through the <strong>full model</strong> (not just this layer), compute cross-entropy at the final classifier. At each greedy step only <strong>up to 20 random candidates</strong> are tried — not all remaining filters. Data pre-collected once, reused every step.</div>
             </div>
           </div>
           <div class="pipe-arrow">→</div>
@@ -1401,8 +1412,8 @@
               <div style="font-size:11px;font-weight:700;color:var(--violet);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.8px">Forward selection (GFS)</div>
               <div style="font-size:12px;line-height:1.6;color:var(--text-dim)">
                 Start empty, add best filter each step.<br>
-                Each candidate is evaluated from the <strong style="color:var(--text-bright)">full set [N]</strong> at every step.<br>
-                Filters can be selected multiple times.<br>
+                Each step considers the <strong style="color:var(--text-bright)">not-yet-selected pool</strong> (in our implementation, up to 20 random candidates).<br>
+                Once added, a filter stays selected — no re-selection.<br>
                 <span style="color:var(--emerald);font-weight:600">Provable O(1/n²) loss rate.</span>
               </div>
             </div>
@@ -1419,12 +1430,12 @@
         </div>
 
         <p class="explain"><strong>What it measures:</strong> The direct contribution of each filter to the network's actual loss. Unlike heuristic criteria (magnitude, sparsity, rank), GFS uses the <em>real loss function</em> as the scoring criterion. A filter is important if adding it to the subnetwork meaningfully reduces the classification loss on calibration data.</p>
-        <p class="explain"><strong>Computational cost:</strong> GFS is significantly more expensive than local scoring methods. For a layer with N<sub>h</sub> filters and n<sub>keep</sub> to retain, it requires N<sub>h</sub> × n<sub>keep</sub> forward passes per layer (evaluating each candidate at each step). For VGG-16's 512-filter layers keeping 358 filters (30% pruning), that's ~183,000 forward passes per layer. Mini-batch evaluation keeps this tractable.</p>
+        <p class="explain"><strong>Computational cost:</strong> GFS is significantly more expensive than local scoring methods. The paper's worst case is N<sub>h</sub> × n<sub>keep</sub> forward passes per layer (every remaining candidate evaluated at every step). Our adaptation caps candidates at <strong>up to 20 random draws per step</strong>, reducing the per-layer cost to O(20 × n<sub>keep</sub>) — for a 512-filter layer keeping 358 filters that is ~7,160 forward passes, not ~183,000. Even with this cap, GFS remains the most expensive scoring criterion in the benchmark.</p>
         <p class="explain"><strong>Layer-wise sequential application:</strong> The paper's Algorithm 1 prunes layers sequentially from input to output. Each layer's pruning immediately affects the input to subsequent layers, so later layers are scored with the already-pruned earlier layers in place.</p>
 
         <div class="callout">
           <div class="callout-title">GFS vs local scoring methods</div>
-          <p>Local methods (APoZ, DropNet, Entropy, HRank, CHIP, LRMF) score each filter using a <strong>proxy criterion</strong> — sparsity, magnitude, rank, independence — hoping it correlates with actual importance. GFS skips the proxy entirely and directly measures loss reduction. The trade-off is time: scoring a 512-filter layer with APoZ takes one forward pass; GFS takes hundreds of thousands. But the scores are provably optimal in a way no heuristic can guarantee.</p>
+          <p>Local methods (APoZ, DropNet, Entropy, HRank, CHIP, LRMF) score each filter using a <strong>proxy criterion</strong> — sparsity, magnitude, rank, independence — hoping it correlates with actual importance. GFS skips the proxy entirely and directly measures loss reduction. The trade-off is time: scoring a 512-filter layer with APoZ takes one forward pass; GFS takes thousands (~20 × n<sub>keep</sub> with our candidate cap, still orders of magnitude more than the local methods).</p>
         </div>
 
         <div class="callout" style="border-color:#14b8a6;background:#14b8a610">
@@ -1438,7 +1449,7 @@
         <div class="visual" style="margin-top:16px">
           <div class="visual-title">How images feed into the filter score</div>
           <div style="font-size:11px;font-family:'IBM Plex Mono',monospace;line-height:2;color:var(--text-dim)">
-            <div>pre-collect: img₁…imgₙ → <span style="color:var(--violet)">tensor T</span> &nbsp;<span style="color:#555"># capped at 256 images for loss evaluation</span></div>
+            <div>pre-collect: img₁…img₆₄ → <span style="color:var(--violet)">tensor T</span> &nbsp;<span style="color:#555"># 64-image mini-batch for loss evaluation</span></div>
             <div style="border-top:1px solid #333;margin-top:6px;padding-top:6px">
               per layer, greedy step 1 (try up to 20 random candidates, not all):<br>
               &nbsp;&nbsp;try filter A: zero layer except S∪{A}, scale, fwd full model(<span style="color:var(--violet)">T</span>) → CE loss = 2.31<br>
@@ -1517,6 +1528,7 @@
         <p class="explain"><strong>Key idea:</strong> A filter in an early layer can receive a high score even if its own activations look unremarkable — what matters is whether <em>important neurons later in the network</em> depend on it. Importance is a weighted sum of all downstream neurons' importance, with weights being absolute connection strengths.</p>
         <p class="explain"><strong>Why per-layer normalization matters:</strong> FC layers are never pruned in our implementation — only Conv2d filters. But normalization is still needed because backward propagation through many weight matrices accumulates scale: early conv layers end up with systematically higher absolute scores than later ones, simply because importance has been multiplied through more layers. Without normalizing each layer to [0, 1] before global ranking, early layers dominate and later layers are never pruned regardless of their actual importance.</p>
         <p class="explain"><strong>Efficiency:</strong> One forward pass for FRL activations + one backward sweep of matrix multiplications. No per-image SVD, no backpropagation, no iterative optimization.</p>
+        <p class="explain"><strong>FRL ranker substitution:</strong> The paper uses <em>Inf-FS</em> (Roffo et al., 2015) for the initial FRL neuron ranking — a MATLAB-only feature-selection algorithm with no maintained Python equivalent. The authors' own ablation shows the propagation step drives performance, not the choice of initial ranker, so we substitute the simpler <code>variance × mean-|activation|</code> score (shares the same intuition: an FRL neuron is informative when its response varies across inputs and has appreciable magnitude).</p>
         <div class="section-label" style="color:#14b8a6;margin-top:20px">Our implementation — two modes</div>
         <div class="pipeline">
           <div class="pipe-step">
@@ -1619,6 +1631,7 @@
         <p class="explain"><strong>Strength:</strong> Reconstruction-based selection provides a superior initialization. The authors report pruned VGG-16 can even <em>outperform</em> the unpruned baseline, because removing redundant filters acts as regularization.</p>
         <div class="section-label" style="color:#14b8a6;margin-top:20px">Our implementation — LOCAL (same pipeline, no per-layer fine-tuning)</div>
         <p class="explain">Same per-layer sequential greedy selection and least-squares rescaling as the paper. We omit per-layer fine-tuning — all fine-tuning happens once after all layers are pruned. Local only, no global variant.</p>
+        <p class="explain"><strong>Last-conv handling:</strong> The reconstruction objective needs a "next conv" to reconstruct, which the last conv lacks. The paper handles this by pruning the last conv at <em>half</em> the rate of other layers — but that would break the uniform per-layer ratio and make FLOPs/parameter counts incomparable across methods in this benchmark. We instead keep the target ratio <code>r</code> uniform and fall back to <strong>ℓ₁ weight-magnitude ranking</strong> for that single layer.</p>
 
         <div class="visual" style="margin-top:16px">
           <div class="visual-title">How images feed into the filter score</div>
@@ -1662,8 +1675,8 @@
           <div class="pipe-step">
             <div class="pipe-num" style="background:var(--violet);color:#fff">1</div>
             <div class="pipe-box">
-              <div class="pipe-title" style="color:var(--violet)">Base Path — all layers, one pass</div>
-              <div class="pipe-desc">One forward pass per batch scores <strong>all layers simultaneously</strong> via hooks — no per-layer re-iteration. Each batch's output at every layer is captured at once as the reference.</div>
+              <div class="pipe-title" style="color:var(--violet)">Base Path — all layers cached in one pass</div>
+              <div class="pipe-desc">One full forward pass per batch caches every layer's reference output via hooks (no separate pass per layer). The per-layer ablations in step 2 then reuse these cached references — they run partial forwards from layer i to layer i+1, not full passes through the network.</div>
             </div>
           </div>
           <div class="pipe-arrow">→</div>
@@ -1679,7 +1692,7 @@
             <div class="pipe-num" style="background:var(--violet);color:#fff">3</div>
             <div class="pipe-box">
               <div class="pipe-title" style="color:var(--violet)">Damage Score — per filter, all layers</div>
-              <div class="pipe-desc"><code>t = ||ref - ablated||² / ||ref||²</code>, averaged over images in the batch. Final score per channel = mean t across all rounds and batches it was ablated in. All layers scored simultaneously — no per-layer re-run.</div>
+              <div class="pipe-desc"><code>t = ||ref - ablated||² / ||ref||²</code>, averaged over images in the batch. Final score per channel = mean t across all rounds and batches it was ablated in. All layers share the same cached reference forward — only the partial (layer i → i+1) forwards are repeated per ablation round.</div>
             </div>
           </div>
           <div class="pipe-arrow">→</div>
