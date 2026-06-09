@@ -1631,7 +1631,60 @@
         <p class="explain"><strong>Strength:</strong> Reconstruction-based selection provides a superior initialization. The authors report pruned VGG-16 can even <em>outperform</em> the unpruned baseline, because removing redundant filters acts as regularization.</p>
         <div class="section-label" style="color:#14b8a6;margin-top:20px">Our implementation — LOCAL (same pipeline, no per-layer fine-tuning)</div>
         <p class="explain">Same per-layer sequential greedy selection and least-squares rescaling as the paper. We omit per-layer fine-tuning — all fine-tuning happens once after all layers are pruned. Local only, no global variant.</p>
-        <p class="explain"><strong>Last-conv handling:</strong> The reconstruction objective needs a "next conv" to reconstruct, which the last conv lacks. The paper handles this by pruning the last conv at <em>half</em> the rate of other layers — but that would break the uniform per-layer ratio and make FLOPs/parameter counts incomparable across methods in this benchmark. We instead keep the target ratio <code>r</code> uniform and fall back to <strong>ℓ₁ weight-magnitude ranking</strong> for that single layer.</p>
+        <p class="explain"><strong>Last-conv handling:</strong> The reconstruction objective needs a "next conv" to reconstruct, which the last conv lacks. The paper handles this by pruning the last conv at <em>half</em> the rate of other layers — but that would break the uniform per-layer ratio and make FLOPs/parameter counts incomparable across methods in this benchmark. We instead keep the target ratio <code>r</code> uniform and fall back to <strong>ℓ₁ weight-magnitude ranking</strong> (Li et al., 2017) for that single layer.</p>
+
+        <div class="callout" style="border-left-color:#14b8a6;background:#14b8a608;border-color:#14b8a630;">
+          <div class="callout-title" style="color:#14b8a6">What is ℓ₁ weight-magnitude ranking?</div>
+          <p>The simplest possible filter-importance criterion. For each filter <em>j</em>, take its weight tensor <code style="color:#22d3ee">W_j ∈ ℝ^(C_in × 3 × 3)</code>, take the <strong>absolute value</strong> of every weight, and sum them all up:</p>
+          <div style="margin:14px auto;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:14px;color:var(--cyan)">
+            s<sub>j</sub> = ‖W<sub>j</sub>‖<sub>1</sub> = Σ<sub>c, u, v</sub> |W<sub>j, c, u, v</sub>|
+          </div>
+          <p style="margin-top:10px"><strong>Intuition:</strong> a filter whose weights are all near zero produces near-zero outputs regardless of what image you show it — so it contributes little to the next layer. Rank filters by this score and remove the lowest.</p>
+        </div>
+
+        <div class="visual" style="margin-top:14px;">
+          <div class="visual-title">ℓ₁ ranking, visualised</div>
+          <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;align-items:flex-start;">
+            <!-- Filter A: small weights -->
+            <div style="text-align:center;flex:1;min-width:170px;">
+              <div style="font-size:10px;font-weight:600;color:var(--rose);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.6px">Filter A — weak</div>
+              <div style="display:grid;grid-template-columns:repeat(3,26px);grid-template-rows:repeat(3,26px);gap:2px;width:fit-content;margin:0 auto;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">
+                <div style="background:rgba(244,63,94,0.10);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--rose)">0.02</div>
+                <div style="background:rgba(244,63,94,0.06);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--rose)">-.01</div>
+                <div style="background:rgba(244,63,94,0.10);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--rose)">0.03</div>
+                <div style="background:rgba(244,63,94,0.05);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--rose)">0.00</div>
+                <div style="background:rgba(244,63,94,0.12);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--rose)">-.04</div>
+                <div style="background:rgba(244,63,94,0.07);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--rose)">0.01</div>
+                <div style="background:rgba(244,63,94,0.08);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--rose)">0.02</div>
+                <div style="background:rgba(244,63,94,0.10);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--rose)">-.03</div>
+                <div style="background:rgba(244,63,94,0.05);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--rose)">0.01</div>
+              </div>
+              <div style="font-size:10px;color:var(--text-dim);margin-top:8px;font-family:'IBM Plex Mono',monospace">Σ |w| ≈ 0.17</div>
+              <div style="font-size:11px;color:var(--rose);font-weight:700;margin-top:4px">→ PRUNE</div>
+            </div>
+
+            <!-- Filter B: large weights -->
+            <div style="text-align:center;flex:1;min-width:170px;">
+              <div style="font-size:10px;font-weight:600;color:var(--emerald);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.6px">Filter B — strong</div>
+              <div style="display:grid;grid-template-columns:repeat(3,26px);grid-template-rows:repeat(3,26px);gap:2px;width:fit-content;margin:0 auto;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:6px;">
+                <div style="background:rgba(16,185,129,0.75);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:#fff">0.82</div>
+                <div style="background:rgba(16,185,129,0.55);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:#fff">-.61</div>
+                <div style="background:rgba(16,185,129,0.65);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:#fff">0.71</div>
+                <div style="background:rgba(16,185,129,0.45);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:#fff">0.48</div>
+                <div style="background:rgba(16,185,129,0.85);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:#fff">0.94</div>
+                <div style="background:rgba(16,185,129,0.40);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:#fff">-.41</div>
+                <div style="background:rgba(16,185,129,0.60);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:#fff">0.67</div>
+                <div style="background:rgba(16,185,129,0.70);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:#fff">0.78</div>
+                <div style="background:rgba(16,185,129,0.50);border-radius:3px;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:#fff">-.52</div>
+              </div>
+              <div style="font-size:10px;color:var(--text-dim);margin-top:8px;font-family:'IBM Plex Mono',monospace">Σ |w| ≈ 5.94</div>
+              <div style="font-size:11px;color:var(--emerald);font-weight:700;margin-top:4px">→ KEEP</div>
+            </div>
+          </div>
+          <p style="font-size:12px;color:var(--text-dim);text-align:center;margin-top:14px;font-style:italic">Each grid is one 3×3 kernel slice; a real filter has <em>C_in</em> stacked slices — ℓ₁ sums every absolute weight across the whole tensor.</p>
+        </div>
+
+        <p class="explain"><strong>Why pick ℓ₁ for the last conv specifically:</strong> Li et al. (2017) propose it as a stand-alone pruning criterion and show it gives competitive accuracy on VGG-16 and ResNet across CIFAR-10 and ImageNet. We use it <em>only</em> at the last conv because it is the most natural <strong>data-free</strong> criterion: it depends purely on the filter's own weights — no calibration images, no next-layer activations, no reconstruction objective. That makes it a clean fallback for the one layer where ThiNet's reconstruction target doesn't exist, while keeping the per-layer pruning ratio <code>r</code> exactly uniform across the network.</p>
 
         <div class="visual" style="margin-top:16px">
           <div class="visual-title">How images feed into the filter score</div>
