@@ -514,6 +514,175 @@
   .badge-output { background: #1a3328; color: var(--accent-emerald); border: 1px solid #2d6b4a; }
   .badge-input { background: #1a1e2e; color: var(--accent-cyan); border: 1px solid #334155; }
   .badge-fmap { background: #0e1a2a; color: var(--accent-cyan); border: 1px solid #1e3a5a; }
+
+  /* ── Deep dive sections ── */
+  .deep-dive { margin-top: 64px; }
+  .deep-dive h2 {
+    color: var(--accent-cyan);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 1.3px;
+    margin: 36px 0 14px;
+    font-weight: 700;
+  }
+  .deep-dive p { line-height: 1.7; font-size: 14.5px; margin-bottom: 12px; color: var(--text); }
+  .deep-dive strong { color: #e8ecf4; }
+  .deep-dive code, .deep-dive .mono {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--accent-cyan);
+  }
+  .dd-card {
+    background: #181c26;
+    border: 1px solid #2a3040;
+    border-radius: 12px;
+    padding: 24px 28px;
+    margin-bottom: 18px;
+  }
+  .dd-stage { padding: 32px 28px; }
+
+  /* Conv layer cutaway */
+  .conv-cutaway {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr;
+    gap: 18px;
+    align-items: center;
+    margin: 20px 0;
+  }
+  .cube-stack { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .cube {
+    width: 90px;
+    height: 90px;
+    position: relative;
+    background: linear-gradient(135deg, rgba(79,143,247,0.4), rgba(79,143,247,0.15));
+    border: 1px solid var(--accent-blue);
+    border-radius: 6px;
+    transform: rotateX(15deg) rotateY(-15deg);
+    box-shadow: 6px 6px 0 0 rgba(79,143,247,0.15), 12px 12px 0 0 rgba(79,143,247,0.08);
+  }
+  .cube.green {
+    background: linear-gradient(135deg, rgba(16,185,129,0.4), rgba(16,185,129,0.15));
+    border-color: var(--accent-emerald);
+    box-shadow: 6px 6px 0 0 rgba(16,185,129,0.15), 12px 12px 0 0 rgba(16,185,129,0.08);
+  }
+  .cube-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #e8ecf4; font-weight: 600; }
+  .cube-sub { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--text-dim); }
+
+  .filters-fan { display: flex; flex-direction: column; gap: 5px; align-items: center; }
+  .filter-kernel {
+    display: grid;
+    grid-template-columns: repeat(3, 10px);
+    grid-template-rows: repeat(3, 10px);
+    gap: 1px;
+    padding: 3px;
+    background: var(--surface);
+    border: 1px solid var(--accent-amber);
+    border-radius: 4px;
+  }
+  .filter-kernel div { background: rgba(245,158,11,0.4); border-radius: 1px; }
+  .filter-kernel div:nth-child(odd) { background: rgba(245,158,11,0.7); }
+
+  .conv-op { font-size: 22px; color: var(--accent-amber); text-align: center; }
+  .conv-arrow { font-size: 18px; color: var(--text-dim); opacity: 0.5; text-align: center; }
+
+  /* FC layer visual */
+  .fc-viz {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr 1fr;
+    gap: 24px;
+    align-items: center;
+    margin: 20px 0;
+  }
+  .vec-column { display: flex; flex-direction: column; gap: 3px; align-items: center; }
+  .vec-cell {
+    width: 42px;
+    height: 18px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, rgba(139,92,246,0.5), rgba(139,92,246,0.2));
+    border: 1px solid var(--accent-violet);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .vec-dot { color: var(--text-dim); font-size: 14px; line-height: 0.7; }
+  .vec-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #e8ecf4; margin-top: 8px; font-weight: 600; }
+  .vec-sub { font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: var(--text-dim); }
+
+  .matrix-W {
+    display: grid;
+    grid-template-columns: repeat(6, 16px);
+    grid-template-rows: repeat(6, 16px);
+    gap: 1px;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--accent-cyan);
+    border-radius: 6px;
+    margin: 0 auto;
+  }
+  .matrix-W div { background: rgba(34,211,238,0.45); border-radius: 1px; }
+  .matrix-W div:nth-child(7n) { background: rgba(34,211,238,0.75); }
+  .matrix-W div:nth-child(3n) { background: rgba(34,211,238,0.25); }
+
+  /* Side-by-side compare cards */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .compare-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .compare-card.blue { border-left: 3px solid var(--accent-blue); }
+  .compare-card.violet { border-left: 3px solid var(--accent-violet); }
+  .compare-card h3 { color: #e8ecf4; font-size: 14px; margin-bottom: 10px; }
+  .compare-card .tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  .tag.blue { background: rgba(79,143,247,0.15); color: var(--accent-blue); border: 1px solid rgba(79,143,247,0.3); }
+  .tag.violet { background: rgba(139,92,246,0.15); color: var(--accent-violet); border: 1px solid rgba(139,92,246,0.3); }
+  .compare-card ul { list-style: none; margin-top: 10px; font-size: 13px; }
+  .compare-card li { padding: 4px 0; line-height: 1.55; color: var(--text); }
+  .compare-card li::before { content: "→  "; color: var(--text-dim); }
+
+  /* Weight budget bars */
+  .weight-bars { display: flex; flex-direction: column; gap: 7px; margin: 14px 0 6px; }
+  .wbar-row {
+    display: grid;
+    grid-template-columns: 140px 1fr 100px;
+    gap: 10px;
+    align-items: center;
+    font-size: 11px;
+  }
+  .wbar-name { font-family: 'IBM Plex Mono', monospace; color: #e8ecf4; font-weight: 600; }
+  .wbar-track { height: 14px; background: var(--surface); border-radius: 3px; overflow: hidden; }
+  .wbar-fill { height: 100%; border-radius: 3px; }
+  .wbar-num { font-family: 'IBM Plex Mono', monospace; color: var(--accent-cyan); text-align: right; }
+
+  .dd-note {
+    background: #22d3ee08;
+    border-left: 3px solid var(--accent-cyan);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    font-size: 13.5px;
+    margin-top: 14px;
+    line-height: 1.65;
+    color: var(--text);
+  }
+  .dd-note strong { color: var(--accent-cyan); }
+  .dd-note.amber { background: #f59e0b08; border-left-color: var(--accent-amber); }
+  .dd-note.amber strong { color: var(--accent-amber); }
+
+  @media (max-width: 720px) {
+    .conv-cutaway { grid-template-columns: 1fr; gap: 14px; }
+    .fc-viz { grid-template-columns: 1fr; gap: 18px; }
+    .compare { grid-template-columns: 1fr; }
+    .wbar-row { grid-template-columns: 90px 1fr 80px; }
+  }
 </style>
 </head>
 <body>
@@ -699,6 +868,190 @@
       <div class="value">30 / 50 / 70%</div>
       <div class="detail">Filter removal per Conv2d layer</div>
     </div>
+  </div>
+
+  <!-- ═══════════════ DEEP DIVE ═══════════════ -->
+  <div class="deep-dive">
+
+    <!-- ─── 1. A conv layer, up close ─── -->
+    <h2>A conv layer, up close</h2>
+    <p>A conv layer takes a <strong>3-D volume</strong> in (channels × H × W) and produces another 3-D volume out. The "weights" of the layer live in a collection of small <strong>filters</strong> (also called kernels). Each filter slides over the input volume and produces <strong>one 2-D feature map</strong>. Stack the feature maps from all filters together, and that's the output.</p>
+
+    <div class="dd-card dd-stage">
+      <div class="conv-cutaway">
+        <div class="cube-stack">
+          <div class="cube"></div>
+          <div class="cube-label">INPUT VOLUME</div>
+          <div class="cube-sub">C_in × H × W</div>
+          <div class="cube-sub">e.g. 128 × 56 × 56</div>
+        </div>
+
+        <div class="conv-op">⊛</div>
+
+        <div class="cube-stack">
+          <div class="filters-fan">
+            <div class="filter-kernel"><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div></div>
+            <div class="filter-kernel"><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div></div>
+            <div class="filter-kernel"><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div></div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-dim)">⋮ × 256</div>
+          </div>
+          <div class="cube-label" style="color:var(--accent-amber)">256 FILTERS</div>
+          <div class="cube-sub">each is C_in × 3 × 3</div>
+          <div class="cube-sub">= 128 × 3 × 3</div>
+        </div>
+
+        <div class="conv-arrow">→</div>
+
+        <div class="cube-stack">
+          <div class="cube green"></div>
+          <div class="cube-label">OUTPUT VOLUME</div>
+          <div class="cube-sub">C_out × H × W</div>
+          <div class="cube-sub">= 256 × 56 × 56</div>
+        </div>
+      </div>
+
+      <div class="dd-note">
+        <strong>The weights of this conv layer</strong> are exactly the <strong>256 filters × (128 × 3 × 3)</strong> numbers = <span class="mono">256 × 128 × 3 × 3 = 294,912 weights</span>. Each filter is <em>one</em> learned pattern detector. The same filter is reused at every spatial position when it slides over the input — that's "weight sharing", and it's why conv layers have orders of magnitude fewer weights than FC layers.
+      </div>
+    </div>
+
+    <!-- ─── 2. An FC layer, up close ─── -->
+    <h2>An FC layer, up close</h2>
+    <p>An FC ("fully connected") layer is just a <strong>matrix multiplication</strong>. The 3-D volume from the last conv block has been flattened into one long vector, and the first FC layer turns that vector into a smaller vector by multiplying it with a weight matrix. Every output neuron is a weighted sum of <em>every</em> input neuron — no spatial sliding, no kernels, no sharing.</p>
+
+    <div class="dd-card dd-stage">
+      <div class="fc-viz">
+        <div class="vec-column">
+          <div class="vec-cell">x₁</div>
+          <div class="vec-cell">x₂</div>
+          <div class="vec-cell">x₃</div>
+          <div class="vec-cell">x₄</div>
+          <div class="vec-cell">x₅</div>
+          <div class="vec-cell">x₆</div>
+          <div class="vec-dot">⋮</div>
+          <div class="vec-label" style="color:var(--accent-violet)">INPUT VECTOR x</div>
+          <div class="vec-sub">25,088 numbers</div>
+          <div class="vec-sub">(= 512 × 7 × 7 flattened)</div>
+        </div>
+
+        <div>
+          <div class="matrix-W">
+            <div></div><div></div><div></div><div></div><div></div><div></div>
+            <div></div><div></div><div></div><div></div><div></div><div></div>
+            <div></div><div></div><div></div><div></div><div></div><div></div>
+            <div></div><div></div><div></div><div></div><div></div><div></div>
+            <div></div><div></div><div></div><div></div><div></div><div></div>
+            <div></div><div></div><div></div><div></div><div></div><div></div>
+          </div>
+          <div class="vec-label" style="color:var(--accent-cyan); text-align:center">MATRIX W</div>
+          <div class="vec-sub" style="text-align:center">4096 × 25,088</div>
+          <div class="vec-sub" style="text-align:center; color:var(--accent-rose)">~100 million weights!</div>
+        </div>
+
+        <div class="vec-column">
+          <div class="vec-cell">y₁</div>
+          <div class="vec-cell">y₂</div>
+          <div class="vec-cell">y₃</div>
+          <div class="vec-cell">y₄</div>
+          <div class="vec-cell">y₅</div>
+          <div class="vec-cell">y₆</div>
+          <div class="vec-dot">⋮</div>
+          <div class="vec-label" style="color:var(--accent-violet)">OUTPUT VECTOR y</div>
+          <div class="vec-sub">4096 numbers</div>
+          <div class="vec-sub">y = W · x</div>
+        </div>
+      </div>
+
+      <div class="dd-note">
+        <strong>Each output neuron yᵢ</strong> is computed as <span class="mono">yᵢ = W[i, :] · x</span> — that is, row <em>i</em> of the matrix dot-producted with the full input vector. So neuron yᵢ "looks at" every single input value, weighted by its row of W.
+      </div>
+    </div>
+
+    <!-- ─── 3. Filters vs neurons ─── -->
+    <h2>"Filters" vs "neurons" — same idea, different shape</h2>
+    <p>People throw around both words and it gets confusing. Here's the simple distinction:</p>
+
+    <div class="compare">
+      <div class="compare-card blue">
+        <h3>FILTER <span class="tag blue">conv layer</span></h3>
+        <ul>
+          <li>A small 3-D kernel (C_in × 3 × 3) of learned weights.</li>
+          <li>Slides across the input, applying the same weights at every spatial position.</li>
+          <li>Produces <strong>one 2-D feature map</strong> as output.</li>
+          <li>A conv layer with 256 filters has 256 feature maps in its output → those <strong>256 output channels = 256 "filters"</strong>. The words are interchangeable.</li>
+          <li><strong>When we "prune a filter"</strong>, we remove that whole kernel + the whole feature map it produces. The next layer gets one fewer input channel.</li>
+        </ul>
+      </div>
+      <div class="compare-card violet">
+        <h3>NEURON <span class="tag violet">FC layer</span></h3>
+        <ul>
+          <li>A single output unit: one row of the weight matrix W.</li>
+          <li>No spatial sharing — it sees the entire flattened input vector at once.</li>
+          <li>Produces <strong>one scalar number</strong> as output.</li>
+          <li>The second FC layer (the FRL for NISP) has 4096 neurons → 4096 rows in W → 4096 scalar outputs.</li>
+          <li><strong>"Pruning a neuron"</strong> would mean removing one row of W (we don't prune FC neurons in this benchmark — only conv filters).</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="dd-note amber">
+      <strong>Why a conv "filter" is sometimes called a "neuron":</strong> in a strict mathematical sense, every output number in a feature map is one neuron's output. A 56×56 feature map technically has 56·56 = 3,136 neurons that all share the same weights (the filter). So conv filters are <em>weight-shared neurons</em>. When the literature says "filter", it means the shared weight kernel; when it says "channel" or "feature map", it means the output that kernel produces. They refer to the same indexed thing.
+    </div>
+
+    <!-- ─── 4. Where the 134 M weights live ─── -->
+    <h2>Where the 134 M weights actually live</h2>
+    <p>Most people are surprised by this: <strong>over 100 million of VGG-16's 134 M weights sit in the first FC layer alone</strong>, because flattening a 512×7×7 volume into a 25,088-long vector and feeding it into 4096 neurons needs a 4096 × 25,088 matrix. Conv filters look big but each only needs C_in × 9 numbers.</p>
+
+    <div class="dd-card">
+      <div class="weight-bars">
+        <div class="wbar-row">
+          <div class="wbar-name">conv block 1</div>
+          <div class="wbar-track"><div class="wbar-fill" style="width:0.06%; background:var(--accent-blue)"></div></div>
+          <div class="wbar-num">~38 K</div>
+        </div>
+        <div class="wbar-row">
+          <div class="wbar-name">conv block 2</div>
+          <div class="wbar-track"><div class="wbar-fill" style="width:0.16%; background:var(--accent-blue)"></div></div>
+          <div class="wbar-num">~221 K</div>
+        </div>
+        <div class="wbar-row">
+          <div class="wbar-name">conv block 3</div>
+          <div class="wbar-track"><div class="wbar-fill" style="width:0.66%; background:var(--accent-blue)"></div></div>
+          <div class="wbar-num">~885 K</div>
+        </div>
+        <div class="wbar-row">
+          <div class="wbar-name">conv block 4</div>
+          <div class="wbar-track"><div class="wbar-fill" style="width:2.6%; background:var(--accent-blue)"></div></div>
+          <div class="wbar-num">~3.5 M</div>
+        </div>
+        <div class="wbar-row">
+          <div class="wbar-name">conv block 5</div>
+          <div class="wbar-track"><div class="wbar-fill" style="width:5.3%; background:var(--accent-blue)"></div></div>
+          <div class="wbar-num">~7.1 M</div>
+        </div>
+        <div class="wbar-row">
+          <div class="wbar-name">FC1 (c.0)</div>
+          <div class="wbar-track"><div class="wbar-fill" style="width:76.5%; background:var(--accent-rose)"></div></div>
+          <div class="wbar-num">~103 M</div>
+        </div>
+        <div class="wbar-row">
+          <div class="wbar-name">FC2 (c.3)</div>
+          <div class="wbar-track"><div class="wbar-fill" style="width:12.5%; background:var(--accent-rose)"></div></div>
+          <div class="wbar-num">~16.8 M</div>
+        </div>
+        <div class="wbar-row">
+          <div class="wbar-name">FC3 (c.6)</div>
+          <div class="wbar-track"><div class="wbar-fill" style="width:0.03%; background:var(--accent-rose)"></div></div>
+          <div class="wbar-num">~41 K</div>
+        </div>
+      </div>
+      <p style="margin-top:14px;font-size:12px;color:var(--text-dim);">Bars scaled to fraction of 134.3 M total parameters. Conv block totals lump 2–3 layers together for readability.</p>
+    </div>
+
+    <div class="dd-note">
+      <strong>Important nuance for pruning:</strong> the benchmark only prunes <strong>conv filters</strong>, not FC neurons. So even at 70% pruning the FC layers stay full-size. But removing conv filters <em>also</em> shrinks the input dimension of FC1 (because the last conv block produces fewer feature maps to flatten), which is where the real parameter savings come from in practice.
+    </div>
+
   </div>
 </div>
 
